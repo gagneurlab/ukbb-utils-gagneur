@@ -172,3 +172,5 @@ cython_debug/
 
 # PyPI configuration file
 .pypirc
+wgs_qc/old_combine_qced_bcf_files copy.ipynb
+vcf_2_zarr/applet_template/*
