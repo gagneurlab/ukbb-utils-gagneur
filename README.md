@@ -16,12 +16,12 @@ bcftools filter --output-type u -e "F_MISSING > 0.1" |
 
 
 ## [`vcf_2_zarr/`](./vcf_2_zarr/)
-Includes DNAnexus applets ([`vcf2zarr_applet`](git/deeprvat_wgs/vcf_2_zarr/vcf2zarr_applet/Readme.md) and [`vcf2zarr_encode_applet`](git/deeprvat_wgs/vcf_2_zarr/vcf2zarr_encode_applet/Readme.md)) designed to convert VCF files into the Zarr format using the `vcf2zarr` tool within the RAP environment. These applets facilitate the partitioning and encoding steps and adapt them for the RAP. 
+Includes DNAnexus applets ([`vcf2zarr_applet`](./vcf_2_zarr/vcf2zarr_applet/Readme.md) and [`vcf2zarr_encode_applet`](./vcf_2_zarr/vcf2zarr_encode_applet/Readme.md)) designed to convert VCF files into the Zarr format using the `vcf2zarr` tool within the RAP environment. These applets facilitate the partitioning and encoding steps and adapt them for the RAP. 
 
 ## [`rap_usage/`](./rap_usage/README.md)
-Provides a guide and useful commands for interacting with the RAP environment, including setting up environments, accessing data, running jobs, and using tools like VSCode and dxfuse. See the [RAP usage README](git/deeprvat_wgs/rap_usage/README.md) for a quickstart.
+Provides a guide and useful commands for interacting with the RAP environment, including setting up environments, accessing data, running jobs, and using tools like VSCode and dxfuse. See the [RAP usage README](./rap_usage/README.md) for a quickstart.
 
 ## [`annotation/`](./annotation/)
-Contains scripts and notebooks for preparing and merging various variant annotations required by DeepRVAT. See the [annotation README](git/deeprvat_wgs/annotation/README.md) for details on the specific annotation sources and merging process.
+Contains scripts and notebooks for preparing and merging various variant annotations required by DeepRVAT. See the [annotation README](./annotation/README.md) for details on the specific annotation sources and merging process.
 
 
