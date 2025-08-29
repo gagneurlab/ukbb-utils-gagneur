@@ -2,6 +2,11 @@
 
 Repository having code for running DeepRVAT2 on the UK Biobank Research Analysis Platform (RAP) using Whole Genome Sequencing (WGS) data.
 
+## Usage !! Setup pre-commit!!
+
+**!! Setup pre-commit!!** so formatting and removal of jupyter notebook outputs is automatically done.
+To do this, just install `pre-commit` into your environment and run `pre-commit install` in your repository after you have cloned it for the first time. Then, pre-commit will always run when you commit.
+
 ## [`wgs_qc/`](./wgs_qc/)
 
 Provides code for extracting the regions covered by each WGS file on the RAP and then runs QC on each file.
