@@ -174,3 +174,10 @@ cython_debug/
 .pypirc
 wgs_qc/old_combine_qced_bcf_files copy.ipynb
 vcf_2_zarr/applet_template/*
+deeprvat_training/simulated_genotypes/logs/*
+deeprvat_training/simulated_genotypes/sample_files/*
+deeprvat_training/simulated_genotypes/simulate_genotypes/logs/*
+*.parquet
+*.pkl
+*.json
+deeprvat_training/simulated_genotypes/simulate_genotypes/wandb/*
