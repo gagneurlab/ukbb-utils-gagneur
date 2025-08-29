@@ -1,0 +1,18 @@
+cff-version: 1.2.0
+title: DeepRVAT-WGS
+message: >-
+  If you use this software, please cite it using the
+  metadata from this file.
+type: software
+authors:
+  - given-names: Eva
+    family-names: Holtkamp
+    orcid: 'https://orcid.org/0000-0002-2129-9908'
+  - given-names: Shubhankar
+    family-names: Londhe
+  - given-names: Matias 
+    family-names: Barandiaran
+repository-code: 'https://github.com/HolEv/deeprvat_wgs'
+abstract: >-
+  Need to write an abstract here 
+license: MIT
