@@ -1,0 +1,66 @@
+{
+  "name": "vep_loftee_parallel",
+  "title": "VEP and LOFTEE App",
+  "inputSpec": [
+    {
+      "name": "variants_parquet", 
+      "class": "file", 
+      "patterns": ["*.parquet"]
+    },
+    {
+      "name": "vep_version", 
+      "class": "string", 
+      "default": "113"
+    },
+    {
+      "name": "chunk_size", 
+      "class": "int", 
+      "default": 50000
+    },
+    {
+      "name": "use_loftee", 
+      "class": "boolean", 
+      "default": true
+    },
+    {
+      "name": "genes_to_keep_file",
+      "label": "Gene List (.txt)",
+      "class": "file",
+      "optional": true,
+      "patterns": ["*.txt"]
+    },
+    {
+      "name": "biotypes_filter",
+      "label": "Biotypes to Keep",
+      "class": "array:string",
+      "optional": true,
+      "default": ["protein_coding"],
+      "help": "List of Ensembl biotypes. Blank to keep all."
+    }
+  ],
+  "outputSpec": [
+    {"name": "vep_parquet", "class": "file", "patterns": ["*.parquet"]}
+  ],
+  "runSpec": {
+    "interpreter": "python3",
+    "version": "0",
+    "file": "vep_loftee_parallel.py",
+    "distribution": "Ubuntu",
+    "release": "24.04",
+    "execDepends": [
+      {"name": "aria2"},
+      {"name": "pigz"},
+      {"name": "polars==1.33.0", "package_manager": "pip"}
+    ]
+  },
+  "regionalOptions": {
+    "aws:eu-west-2": {
+      "systemRequirements": {
+        "main": {"instanceType": "mem1_ssd1_v2_x4"},
+        "process_chunk": {"instanceType": "mem2_ssd1_v2_x16"},
+        "gather": {"instanceType": "mem2_ssd1_v2_x16"}
+      }
+    }
+  },
+  "access": {"network": ["*"]}
+}
