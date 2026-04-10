@@ -21,7 +21,20 @@ main() {
     # regenie_step_1_prs_list=$(dx ls project-REDACTED:/processed_data/olink/regenie/step_1/*_prs.list --brief)
 
     # --- download inputs ---
-    dx download "$input_csv" -o input.csv
+    mkdir -p csv_files
+    for file_id in "${input_csv[@]}"; do
+        dx download "$file_id" --output csv_files/ &
+    done
+    wait
+    first=1
+    for f in csv_files/*.csv; do
+        if [ $first -eq 1 ]; then
+            cat "$f"
+            first=0
+        else
+            tail -n +2 "$f"
+        fi
+    done > input.csv
     dx download "$sample_list" -o sample_list.txt
     dx download "$regenie_step_1_prs_list" -o prs.list
     mkdir -p prs_files

@@ -1,0 +1,76 @@
+{
+  "name": "adjust_olink_ukbgym",
+  "title": "Adjust Olink proteomics",
+  "summary": "Adjust protein abundance using z-score, RINT, OLS regression, per-protein regression, or Protrider outlier detection.",
+  "dxapi": "1.0.0",
+  "version": "0.0.1",
+  "inputSpec": [
+    {
+      "name": "input_csv",
+      "label": "Input proteomics CSVs",
+      "class": "array:file",
+      "optional": false,
+      "patterns": ["*.csv"],
+      "help": "Olink CSV file exported using TableExporter."
+    },
+    {
+      "name": "regenie_step_1_prs",
+      "label": "Regenie step 1 PRS files",
+      "class": "array:file",
+      "optional": false,
+      "patterns": ["*.prs"],
+      "help": "List files ending in .prs from the regenie step 1 output directory."
+    },
+    {
+      "name": "regenie_step_1_prs_list",
+      "label": "Regenie step 1 PRS list",
+      "class": "file",
+      "optional": false,
+      "patterns": ["*_prs.list"],
+      "help": "Text file containing paths to .prs files from the regenie step 1 output directory."
+    },
+    {
+      "name": "sample_list",
+      "label": "Sample list",
+      "class": "file",
+      "optional": false,
+      "patterns": ["*.txt", "*.csv"],
+      "help": "Line-separated text file of sample IDs to include."
+    }
+  ],
+  "outputSpec": [
+    {
+      "name": "output_parquet",
+      "label": "Adjusted proteomics parquet",
+      "class": "file",
+      "patterns": ["*.parquet"],
+      "help": "Adjusted protein abundance values."
+    }
+  ],
+  "runSpec": {
+    "timeoutPolicy": {
+      "*": {
+        "hours": 3
+      }
+    },
+    "interpreter": "bash",
+    "file": "src/adjust_olink_ukbgym.sh",
+    "distribution": "Ubuntu",
+    "release": "24.04",
+    "version": "0"
+  },
+  "access": {
+    "network": [
+      "*"
+    ]
+  },
+  "regionalOptions": {
+    "aws:eu-west-2": {
+      "systemRequirements": {
+        "*": {
+          "instanceType": "mem1_ssd1_v2_x16"
+        }
+      }
+    }
+  }
+}

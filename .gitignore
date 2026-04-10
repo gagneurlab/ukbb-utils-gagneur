@@ -179,5 +179,4 @@ deeprvat_training/simulated_genotypes/sample_files/*
 deeprvat_training/simulated_genotypes/simulate_genotypes/logs/*
 *.parquet
 *.pkl
-*.json
 deeprvat_training/simulated_genotypes/simulate_genotypes/wandb/*
