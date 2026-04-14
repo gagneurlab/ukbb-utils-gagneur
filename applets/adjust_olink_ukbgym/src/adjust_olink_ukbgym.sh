@@ -6,6 +6,7 @@ set -euxo pipefail
 main() {
     # install uv
     curl -LsSf https://astral.sh/uv/install.sh | sh
+    source $HOME/.local/bin/env
 
     # install protadjust
     PROTADJUST_IMAGE="ghcr.io/gtsitsiridis/protadjust:latest"
@@ -15,19 +16,12 @@ main() {
         docker run --rm -v "$PWD:/data" "$PROTADJUST_IMAGE" "$@"
     }
 
-    # input_csv="file-REDACTED"
-    # sample_list="file-REDACTED"
-    # regenie_step_1_prs=($(dx ls project-REDACTED:/processed_data/olink/regenie/step_1/*.prs --brief))
-    # regenie_step_1_prs_list=$(dx ls project-REDACTED:/processed_data/olink/regenie/step_1/*_prs.list --brief)
-
     # --- download inputs ---
-    mkdir -p csv_files
-    for file_id in "${input_csv[@]}"; do
-        dx download "$file_id" --output csv_files/ &
-    done
-    wait
+    dx-download-all-inputs --parallel
+
+    # concatenate input CSVs (array:file) into a single input.csv
     first=1
-    for f in csv_files/*.csv; do
+    for f in "${input_csv_path[@]}"; do
         if [ $first -eq 1 ]; then
             cat "$f"
             first=0
@@ -35,20 +29,28 @@ main() {
             tail -n +2 "$f"
         fi
     done > input.csv
-    dx download "$sample_list" -o sample_list.txt
-    dx download "$regenie_step_1_prs_list" -o prs.list
-    mkdir -p prs_files
-    for file_id in "${regenie_step_1_prs[@]}"; do
-        dx download "$file_id" --output prs_files/ &
-    done
-    wait
-    wget  -nd  biobank.ndph.ox.ac.uk/ukb/ukb/auxdata/olink_assay.dat
+
+    wget -nd biobank.ndph.ox.ac.uk/ukb/ukb/auxdata/olink_assay.dat
 
     # Step 1: preprocess olink
-    uv run preprocess_olink.py --olink-path input.csv --helper-assay-path olink_assay.dat --samples-path sample_list.txt --output-dir .
+    uv run preprocess_olink.py \
+        --olink-path input.csv \
+        --helper-assay-path olink_assay.dat \
+        --samples-path "$sample_list_path" \
+        --output-dir .
+
+    # Flatten array:file PRS inputs into a single directory (dx-download-all-inputs
+    # places each file under a numbered subdirectory, e.g. .../regenie_step_1_prs/0/file.prs)
+    mkdir -p prs_files
+    for f in "${regenie_step_1_prs_path[@]}"; do
+        cp "$f" prs_files/
+    done
 
     # Step 2: aggregate PRS files into parquet
-    uv run aggregate_prs.py --prs-list prs.list --prs-dir prs_files/ --output prs.parquet
+    uv run aggregate_prs.py \
+        --prs-list "$regenie_step_1_prs_list_path" \
+        --prs-dir prs_files \
+        --output prs.parquet
 
     # Step 3: adjust proteomics data for PRS
     protadjust -v \

@@ -1,0 +1,80 @@
+{
+  "name": "prepare_regenie_olink_inputs",
+  "title": "Prepare regenie Olink inputs",
+  "summary": "Format proteomics levels and covariates parquets into regenie-ready text files.",
+  "dxapi": "1.0.0",
+  "version": "0.0.1",
+  "inputSpec": [
+    {
+      "name": "raw_covariates",
+      "label": "Raw covariates CSV",
+      "class": "file",
+      "optional": false,
+      "patterns": ["*.csv"],
+      "help": "Raw covariates CSV exported from table-exporter (samples x UKB fields)."
+    },
+    {
+      "name": "covariate_mapping",
+      "label": "Covariate field mapping parquet",
+      "class": "file",
+      "optional": false,
+      "patterns": ["*.parquet"],
+      "help": "Parquet mapping UKB codes to field names and titles (olink_covariate_field_mapping.parquet)."
+    },
+    {
+      "name": "proteomics_levels",
+      "label": "Proteomics levels CSV",
+      "class": "file",
+      "optional": false,
+      "patterns": ["*.csv"],
+      "help": "CSV file of proteomics levels exported from table-exporter."
+    }
+  ],
+  "outputSpec": [
+    {
+      "name": "regenie_covariates",
+      "label": "Regenie covariates",
+      "class": "file",
+      "patterns": ["*.txt"],
+      "help": "Tab-separated covariates file for regenie (FID, IID, covariates)."
+    },
+    {
+      "name": "regenie_levels",
+      "label": "Regenie phenotype levels",
+      "class": "file",
+      "patterns": ["*.txt"],
+      "help": "Tab-separated phenotype file for regenie (FID, IID, proteins)."
+    },
+    {
+      "name": "regenie_samples",
+      "label": "Regenie sample list",
+      "class": "file",
+      "patterns": ["*.txt"],
+      "help": "Tab-separated sample list for regenie (FID, IID)."
+    }
+  ],
+  "runSpec": {
+    "timeoutPolicy": {
+      "*": {
+        "hours": 1
+      }
+    },
+    "interpreter": "bash",
+    "file": "src/prepare_regenie_olink_inputs.sh",
+    "distribution": "Ubuntu",
+    "release": "24.04",
+    "version": "0"
+  },
+  "access": {
+    "network": ["*"]
+  },
+  "regionalOptions": {
+    "aws:eu-west-2": {
+      "systemRequirements": {
+        "*": {
+          "instanceType": "mem1_ssd1_v2_x2"
+        }
+      }
+    }
+  }
+}
