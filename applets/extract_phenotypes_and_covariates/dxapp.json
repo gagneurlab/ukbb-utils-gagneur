@@ -1,0 +1,83 @@
+{
+  "name": "ukb_pheno_extractor",
+  "title": "UKB Phenotype Extractor (Python/Polars)",
+  "summary": "Extracts and QCs UKB phenotypes directly from the Apollo dataset",
+  "dxapi": "1.0.0",
+  "version": "1.0.0",
+  "inputSpec": [
+    {
+      "name": "dataset_id",
+      "class": "record",
+      "help": "The UKB Dataset Record ID (e.g., record-XXXXX)"
+    },
+    {
+      "name": "pheno_list_file",
+      "class": "file",
+      "help": "Text file containing list of phenotype columns"
+    },
+    {
+      "name": "covar_list_file",
+      "class": "file",
+      "help": "Text file containing list of covariate columns"
+    },
+    {
+      "name": "bim_file",
+      "class": "file",
+      "help": "The PLINK .bim file to extract the snplist"
+    },
+    {
+      "name": "subset_eur",
+      "class": "boolean",
+      "default": false,
+      "help": "Filter to European ancestry (p30079 = 1)"
+    },
+    {
+      "name": "subset_unrelated",
+      "class": "boolean",
+      "default": false,
+      "help": "Calculate and filter out related samples via kinship matrix"
+    },
+    {
+      "name": "statin_correction",
+      "class": "boolean",
+      "default": false,
+      "help": "Apply statin correction logic to cholesterol/LDL"
+    }
+  ],
+  "outputSpec": [
+    {
+      "name": "covariates",
+      "class": "file"
+    },
+    {
+      "name": "phenotypes",
+      "class": "file"
+    },
+    {
+      "name": "snplist",
+      "class": "file"
+    }
+  ],
+  "runSpec": {
+    "timeoutPolicy": {
+      "*": {
+        "hours": 8
+      }
+    },
+    "interpreter": "python3",
+    "release": "20.04",
+    "distribution": "Ubuntu",
+    "file": "extract_phenotypes_and_covariates.py",
+    "systemRequirements": {
+      "*": {
+        "instanceType": "mem1_ssd1_v2_x16"
+      }
+    },
+    "execDepends": [
+      {
+        "name": "polars",
+        "package_manager": "pip"
+      }
+    ]
+  }
+}
