@@ -314,7 +314,7 @@ def main(dataset_id, pheno_list_file, bim_file=None, additional_covars_file=None
         
         snplist_out = "snplist.snplist"
         # Write only the SNP column, no header, for REGENIE
-        bim_df.select("SNP").write_csv(snplist_out, has_header=False)
+        bim_df.select("SNP").write_csv(snplist_out, include_header=False)
         print(f"Extracted {bim_df.height} variants into snplist.")
     else:
         print("No bim file provided, skipping snplist generation.")
