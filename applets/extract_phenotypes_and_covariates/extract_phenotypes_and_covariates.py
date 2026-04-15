@@ -66,7 +66,7 @@ def extract_phenotypes(fields_list, dataset_id, batch_size=25):
         assert next_df.height == chunk_dfs[0].height, f"Batch size mismatch at chunk {i}!"
         final_df = final_df.join(next_df, on="eid", how="inner")
 
-    return final_df
+    return final_df, unique_fields
 
 def ukb_gen_related_with_data(data: pl.DataFrame, ukb_with_data: set, cutoff: float = 0.0884) -> pl.DataFrame:
     return data.filter(
@@ -231,7 +231,7 @@ def main(dataset_id, pheno_list_file, bim_file=None, additional_covars_file=None
 
     covar_fields_list = standard_covars + eur_field + medication_fields + additional_covars_fields
 
-    cov_df = extract_phenotypes(covar_fields_list, dataset_id)
+    cov_df, raw_cov_list = extract_phenotypes(covar_fields_list, dataset_id)
 
     # Safely extract the file ID string from the DNAnexus link dictionary
     file_id = pheno_list_file if isinstance(pheno_list_file, str) else pheno_list_file["$dnanexus_link"]
@@ -243,7 +243,7 @@ def main(dataset_id, pheno_list_file, bim_file=None, additional_covars_file=None
     with open(local_list_name, 'r') as f:
         pheno_fields_list = [line.strip() for line in f if line.strip()]
 
-    pheno_df = extract_phenotypes(pheno_fields_list, dataset_id)
+    pheno_df, raw_pheno_list = extract_phenotypes(pheno_fields_list, dataset_id)
     
     print("Merging phenotype and covariate dataframes...")
     df = pheno_df.join(cov_df, on="eid", how="inner")
@@ -288,7 +288,7 @@ def main(dataset_id, pheno_list_file, bim_file=None, additional_covars_file=None
     ])
 
     # Safely pull the requested columns that survived the QC pipeline
-    final_covar_cols = ["FID", "IID"] + [c for c in raw_covar_list if c in df.columns]
+    final_covar_cols = ["FID", "IID"] + [c for c in raw_cov_list if c in df.columns]
     final_pheno_cols = ["FID", "IID"] + [c for c in final_pheno_list if c in df.columns]
 
     covar_out = "covariates.txt"
