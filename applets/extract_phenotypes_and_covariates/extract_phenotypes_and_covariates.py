@@ -262,7 +262,7 @@ def main(dataset_id, pheno_list_file, bim_file=None, additional_covars_file=None
         # Find the ancestry column dynamically (handles p30079 or p30079_i0)
         eur_col = [c for c in df.columns if c.startswith("p30079")]
         if eur_col:
-            df = df.filter(pl.col(eur_col[0]) == 5)             # EUR code is 1 in field 30079
+            df = df.filter(pl.col(eur_col[0]) == 5)             # EUR code is 5 in field 30079
             print(f"Retained {df.height} EUR participants.")
         else:
             print("WARNING: Ancestry field 30079 not found. Skipping EUR subset.")
