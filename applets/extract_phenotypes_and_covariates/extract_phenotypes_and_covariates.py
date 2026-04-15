@@ -12,34 +12,21 @@ from collections import defaultdict
 
 PROJECT_ID = os.environ.get("DX_PROJECT_CONTEXT_ID")
 
-def extract_phenotypes(file_link, dataset_id, batch_size=25, extra_fields=None):
+def extract_phenotypes(fields_list, dataset_id, batch_size=25):
     """
-    Downloads a text file containing phenotype names, batches them to bypass 
+    Downloads phenotype fields speciffied in the fields_list, batches them to bypass 
     API limits, extracts the data via dx CLI, and returns a Polars DataFrame
     along with the list of extracted fields.
     """
-    # Safely extract the file ID string from the DNAnexus link dictionary
-    file_id = file_link if isinstance(file_link, str) else file_link["$dnanexus_link"]
-    
-    print(f"Downloading list file {file_id}...")
-    local_list_name = f"list_{file_id}.txt"
-    dxpy.download_dxfile(file_id, local_list_name)
-    
-    # Read the fields from the file
-    with open(local_list_name, 'r') as f:
-        fields_list = [line.strip() for line in f if line.strip()]
-        
-    if extra_fields:
-        fields_list.extend(extra_fields)
-        
-    print(f"Found {len(fields_list)} fields. Preparing extraction...")
+    print(f"Preparing extraction of {len(fields_list)} fields...")
 
     # Clean, prefix, and deduplicate
     cleaned_fields = [f for f in fields_list if f.replace("participant.", "") != "eid"]
     prefixed_fields = [f"participant.{f}" if not f.startswith("participant.") else f for f in cleaned_fields]
     unique_fields = list(dict.fromkeys(prefixed_fields))
 
-    full_dataset_path = f"{PROJECT_ID}:{dataset_id}"
+    dataset_str = dataset_id if isinstance(dataset_id, str) else dataset_id["$dnanexus_link"]
+    full_dataset_path = f"{PROJECT_ID}:{dataset_str}"
 
     # Chunk into batches
     chunks = [unique_fields[i:i + batch_size] for i in range(0, len(unique_fields), batch_size)]
@@ -48,7 +35,7 @@ def extract_phenotypes(file_link, dataset_id, batch_size=25, extra_fields=None):
     for i, chunk in enumerate(chunks):
         batch_fields = ["participant.eid"] + chunk
         fields_str = ",".join(batch_fields)
-        out_file = f"chunk_{file_id}_{i}.tsv"
+        out_file = f"pheno_chunk_{i}.tsv"
         
         print(f" -> Extracting Batch {i+1}/{len(chunks)} ({len(batch_fields)} columns)...")
         
@@ -79,7 +66,7 @@ def extract_phenotypes(file_link, dataset_id, batch_size=25, extra_fields=None):
         assert next_df.height == chunk_dfs[0].height, f"Batch size mismatch at chunk {i}!"
         final_df = final_df.join(next_df, on="eid", how="inner")
 
-    return final_df, cleaned_fields
+    return final_df
 
 def ukb_gen_related_with_data(data: pl.DataFrame, ukb_with_data: set, cutoff: float = 0.0884) -> pl.DataFrame:
     return data.filter(
@@ -217,19 +204,46 @@ def apply_statin_correction(df: pl.DataFrame) -> pl.DataFrame:
     return df
 
 @dxpy.entry_point('main')
-def main(dataset_id, pheno_list_file, covar_list_file, bim_file, subset_eur=False, subset_unrelated=False, statin_correction=False):
+def main(dataset_id, pheno_list_file, bim_file, additional_covars_file=None, subset_eur=False, subset_unrelated=False, statin_correction=False):
     
     # ---------------------------------------------------------
     # 1. DOWNLOAD INPUT FILES & EXTRACT DATA
     # ---------------------------------------------------------
     print("Extracting data from DNAnexus Apollo...")
     
-    # If we are subsetting to EUR, we MUST extract the ancestry field (p30079)
-    # We append it to covariates so we don't accidentally treat it as a trait later
+    # Define standard REGENIE covariates: Age (p21003), Sex (p22001), and PCs 1-20
+    standard_covars = ["p21003", "p22001"] + [f"p22009_a{i}" for i in range(1, 21)]
+
     eur_field = ["p30079"] if subset_eur else []
+    medication_fields = [f'p20003_i0_a{i}' for i in range(0, 48)] if statin_correction else []
+    # Append any user-provided extra covariates
+    if additional_covars_file:
+        additional_covars_file_id = additional_covars_file if isinstance(additional_covars_file, str) else additional_covars_file["$dnanexus_link"]
+        print(f"Downloading list file {additional_covars_file_id}...")
+        local_list_name = f"list_{additional_covars_file_id}.txt"
+        dxpy.download_dxfile(additional_covars_file_id, local_list_name)
+        
+        # Read the fields from the file
+        with open(local_list_name, 'r') as f:
+            additional_covars_fields = [line.strip() for line in f if line.strip()]
+    else:
+        additional_covars_fields = []
+
+    covar_fields_list = standard_covars + eur_field + medication_fields + additional_covars_fields
+
+    cov_df = extract_phenotypes(covar_fields_list, dataset_id)
+
+    # Safely extract the file ID string from the DNAnexus link dictionary
+    file_id = pheno_list_file if isinstance(pheno_list_file, str) else pheno_list_file["$dnanexus_link"]
+    print(f"Downloading list file {file_id}...")
+    local_list_name = f"list_{file_id}.txt"
+    dxpy.download_dxfile(file_id, local_list_name)
     
-    pheno_df, raw_pheno_list = extract_phenotypes(pheno_list_file, dataset_id)
-    cov_df, raw_covar_list = extract_phenotypes(covar_list_file, dataset_id, extra_fields=eur_field)
+    # Read the fields from the file
+    with open(local_list_name, 'r') as f:
+        pheno_fields_list = [line.strip() for line in f if line.strip()]
+
+    pheno_df = extract_phenotypes(pheno_fields_list, dataset_id)
     
     print("Merging phenotype and covariate dataframes...")
     df = pheno_df.join(cov_df, on="eid", how="inner")
@@ -253,7 +267,7 @@ def main(dataset_id, pheno_list_file, covar_list_file, bim_file, subset_eur=Fals
         # Find the ancestry column dynamically (handles p30079 or p30079_i0)
         eur_col = [c for c in df.columns if c.startswith("p30079")]
         if eur_col:
-            df = df.filter(pl.col(eur_col[0]) == 1)             # EUR code is 1 in field 30079
+            df = df.filter(pl.col(eur_col[0]) == 5)             # EUR code is 1 in field 30079
             print(f"Retained {df.height} EUR participants.")
         else:
             print("WARNING: Ancestry field 30079 not found. Skipping EUR subset.")

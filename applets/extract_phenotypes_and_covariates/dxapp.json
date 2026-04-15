@@ -77,5 +77,6 @@
     "execDepends": [
       {"name": "polars==1.33.0", "package_manager": "pip"}
     ]
-  }
+  },
+  "access": {"network": ["*"]}
 }
