@@ -204,7 +204,7 @@ def apply_statin_correction(df: pl.DataFrame) -> pl.DataFrame:
     return df
 
 @dxpy.entry_point('main')
-def main(dataset_id, pheno_list_file, bim_file, additional_covars_file=None, subset_eur=False, subset_unrelated=False, statin_correction=False):
+def main(dataset_id, pheno_list_file, bim_file=None, additional_covars_file=None, subset_eur=False, subset_unrelated=False, statin_correction=False):
     
     # ---------------------------------------------------------
     # 1. DOWNLOAD INPUT FILES & EXTRACT DATA
@@ -248,11 +248,6 @@ def main(dataset_id, pheno_list_file, bim_file, additional_covars_file=None, sub
     print("Merging phenotype and covariate dataframes...")
     df = pheno_df.join(cov_df, on="eid", how="inner")
     print(f"Total merged dataset: {df.height} participants, {len(df.columns)} columns.")
-
-    print("Downloading bim file...")
-    # Safely extract the file ID string from the DNAnexus link dictionary
-    bim_id = bim_file if isinstance(bim_file, str) else bim_file["$dnanexus_link"]
-    dxpy.download_dxfile(bim_id, "input.bim")
 
     # ---------------------------------------------------------
     # 2. RUN QC AND FILTERING 
@@ -306,15 +301,24 @@ def main(dataset_id, pheno_list_file, bim_file, additional_covars_file=None, sub
     # ---------------------------------------------------------
     # 4. PROCESS BIM FILE TO GENERATE SNPLIST
     # ---------------------------------------------------------
-    print("Extracting SNP list from the .bim file...")
-    # .bim files are 6 columns with no header. The variant ID is the 2nd column.
-    bim_df = pl.read_csv("input.bim", separator="\t", has_header=False, 
-                         new_columns=["CHR", "SNP", "CM", "BP", "A1", "A2"], infer_schema_length=0)
-    
-    snplist_out = "snplist.snplist"
-    # Write only the SNP column, no header, for REGENIE
-    bim_df.select("SNP").write_csv(snplist_out, has_header=False)
-    print(f"Extracted {bim_df.height} variants into snplist.")
+    if bim_file:
+        print("Downloading bim file...")
+        # Safely extract the file ID string from the DNAnexus link dictionary
+        bim_id = bim_file if isinstance(bim_file, str) else bim_file["$dnanexus_link"]
+        dxpy.download_dxfile(bim_id, "input.bim")
+
+        print("Extracting SNP list from the .bim file...")
+        # .bim files are 6 columns with no header. The variant ID is the 2nd column.
+        bim_df = pl.read_csv("input.bim", separator="\t", has_header=False, 
+                            new_columns=["CHR", "SNP", "CM", "BP", "A1", "A2"], infer_schema_length=0)
+        
+        snplist_out = "snplist.snplist"
+        # Write only the SNP column, no header, for REGENIE
+        bim_df.select("SNP").write_csv(snplist_out, has_header=False)
+        print(f"Extracted {bim_df.height} variants into snplist.")
+    else:
+        print("No bim file provided, skipping snplist generation.")
+        snplist_out = None
 
     # ---------------------------------------------------------
     # 5. UPLOAD OUTPUTS BACK TO DNANEXUS
@@ -323,7 +327,7 @@ def main(dataset_id, pheno_list_file, bim_file, additional_covars_file=None, sub
     return {
         "covariates": dxpy.dxlink(dxpy.upload_local_file(covar_out)),
         "phenotypes": dxpy.dxlink(dxpy.upload_local_file(pheno_out)),
-        "snplist": dxpy.dxlink(dxpy.upload_local_file(snplist_out))
+        "snplist": dxpy.dxlink(dxpy.upload_local_file(snplist_out)) if snplist_out else None
     }
 
 dxpy.run()
