@@ -4,6 +4,8 @@ import dxpy
 import polars as pl
 from collections import defaultdict
 
+PROJECT_ID = os.environ.get("DX_PROJECT_CONTEXT_ID")
+
 def extract_phenotypes(file_link, dataset_id, batch_size=25, extra_fields=None):
     """
     Downloads a text file containing phenotype names, batches them to bypass 
@@ -31,8 +33,7 @@ def extract_phenotypes(file_link, dataset_id, batch_size=25, extra_fields=None):
     prefixed_fields = [f"participant.{f}" if not f.startswith("participant.") else f for f in cleaned_fields]
     unique_fields = list(dict.fromkeys(prefixed_fields))
 
-    project_id = os.environ.get("DX_PROJECT_CONTEXT_ID")
-    full_dataset_path = f"{project_id}:{dataset_id}"
+    full_dataset_path = f"{PROJECT_ID}:{dataset_id}"
 
     # Chunk into batches
     chunks = [unique_fields[i:i + batch_size] for i in range(0, len(unique_fields), batch_size)]
@@ -68,7 +69,8 @@ def extract_phenotypes(file_link, dataset_id, batch_size=25, extra_fields=None):
     # Merge all batches on 'eid'
     print("Merging batches into a single DataFrame...")
     final_df = chunk_dfs[0]
-    for next_df in chunk_dfs[1:]:
+    for i, next_df in enumerate(chunk_dfs[1:]):
+        assert next_df.height == chunk_dfs[0].height, f"Batch size mismatch at chunk {i}!"
         final_df = final_df.join(next_df, on="eid", how="inner")
 
     return final_df, cleaned_fields
@@ -104,7 +106,8 @@ def ukb_gen_samples_to_remove(data: pl.DataFrame, ukb_with_data: set, cutoff: fl
             (pl.col("ID1") != most_connected_id) & (pl.col("ID2") != most_connected_id)
         )
 
-    remove_samples.extend(data["ID2"].to_list())
+    # remove_samples.extend(data["ID2"].to_list())
+    remove_samples.extend(data["ID2"].unique().to_list())
     return remove_samples
 
 def computed_unrelated_ids(df: pl.DataFrame, cutoff: float = 0.0884) -> pl.DataFrame:
@@ -113,7 +116,7 @@ def computed_unrelated_ids(df: pl.DataFrame, cutoff: float = 0.0884) -> pl.DataF
     # Download the kinship matrix directly using the DX CLI
     subprocess.run([
         "dx", "download",
-        "project-REDACTED:/Bulk/Genotype Results/Genotype calls/ukb_rel.dat",
+        f"{PROJECT_ID}:/Bulk/Genotype Results/Genotype calls/ukb_rel.dat",
         "-o", "ukb_rel.dat"
     ], check=True)
     
@@ -160,11 +163,20 @@ def handle_multiple_measurements(df: pl.DataFrame, pheno_list: list) -> tuple[pl
 
 def apply_statin_correction(df: pl.DataFrame) -> pl.DataFrame:
     STATIN_CODES = [
-        "1140861958", 
-        "1140888594", 
-        "1141146234", 
-        "1140864592"
-        # Add any other deeprvat codes here
+        "1140861958", # simvastatin
+        "1140861970", # lipostat 10mg tablet
+        "1140864592", # lescol 20mg capsule
+        "1140881748", # zocor 10mg tablet
+        "1140888594", # fluvastatin
+        "1140888648", # pravastatin
+        "1140910632", # eptastatin
+        "1140910652", # synvinolin
+        "1140910654", # velastatin
+        "1141146138", # lipitor 10mg tablet
+        "1141146234", # atorvastatin
+        "1141192410", # rosuvastatin
+        "1141192414", # crestor 10mg tablet
+        "1141200040", # zocor heart-pro 10mg tablet
     ]
     
     print(f"Applying statin correction using {len(STATIN_CODES)} hardcoded codes...")
@@ -235,7 +247,7 @@ def main(dataset_id, pheno_list_file, covar_list_file, bim_file, subset_eur=Fals
         # Find the ancestry column dynamically (handles p30079 or p30079_i0)
         eur_col = [c for c in df.columns if c.startswith("p30079")]
         if eur_col:
-            df = df.filter(pl.col(eur_col[0]) == 1) 
+            df = df.filter(pl.col(eur_col[0]) == 1)             # EUR code is 1 in field 30079
             print(f"Retained {df.height} EUR participants.")
         else:
             print("WARNING: Ancestry field 30079 not found. Skipping EUR subset.")

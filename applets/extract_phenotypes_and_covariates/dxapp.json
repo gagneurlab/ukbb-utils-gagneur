@@ -1,9 +1,9 @@
 {
-  "name": "ukb_pheno_extractor",
-  "title": "UKB Phenotype Extractor (Python/Polars)",
-  "summary": "Extracts and QCs UKB phenotypes directly from the Apollo dataset",
-  "dxapi": "1.0.0",
-  "version": "1.0.0",
+  "name": "extract_phenotypes_and_covariates",
+  "title": "Extractor Phenotypes and Covariates",
+  "summary": "Extracts phenotypes and covariates directly from the Apollo dataset. Can subset to EUR ancestry, unrelated individuals, and correct lipids for statin usage.",
+  "dxapi": "0.1.0",
+  "version": "0.1.0",
   "inputSpec": [
     {
       "name": "dataset_id",
@@ -28,19 +28,19 @@
     {
       "name": "subset_eur",
       "class": "boolean",
-      "default": false,
+      "default": true,
       "help": "Filter to European ancestry (p30079 = 1)"
     },
     {
       "name": "subset_unrelated",
       "class": "boolean",
-      "default": false,
+      "default": true,
       "help": "Calculate and filter out related samples via kinship matrix"
     },
     {
       "name": "statin_correction",
       "class": "boolean",
-      "default": false,
+      "default": true,
       "help": "Apply statin correction logic to cholesterol/LDL"
     }
   ],
@@ -65,7 +65,8 @@
       }
     },
     "interpreter": "python3",
-    "release": "20.04",
+    "release": "24.04",
+    "version": "0",
     "distribution": "Ubuntu",
     "file": "extract_phenotypes_and_covariates.py",
     "systemRequirements": {
@@ -74,10 +75,7 @@
       }
     },
     "execDepends": [
-      {
-        "name": "polars",
-        "package_manager": "pip"
-      }
+      {"name": "polars==1.33.0", "package_manager": "pip"}
     ]
   }
 }
