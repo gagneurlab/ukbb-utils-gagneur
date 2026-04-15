@@ -211,8 +211,8 @@ def main(dataset_id, pheno_list_file, bim_file=None, additional_covars_file=None
     # ---------------------------------------------------------
     print("Extracting data from DNAnexus Apollo...")
     
-    # Define standard REGENIE covariates: Age (p21003), Sex (p22001), and PCs 1-20
-    standard_covars = ["p21003", "p22001"] + [f"p22009_a{i}" for i in range(1, 21)]
+    # Define standard REGENIE covariates: Age (p21003_i0), Sex (p22001), and PCs 1-20
+    standard_covars = ["p21003_i0", "p22001"] + [f"p22009_a{i}" for i in range(1, 21)]
 
     eur_field = ["p30079"] if subset_eur else []
     medication_fields = [f'p20003_i0_a{i}' for i in range(0, 48)] if statin_correction else []
