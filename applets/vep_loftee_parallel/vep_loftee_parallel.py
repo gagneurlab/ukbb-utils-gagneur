@@ -1,9 +1,8 @@
 #!/usr/bin/env python3
 
 """
-vep_setup.py — Build VEP cache + LOFTEE resources and package as a DNAnexus Applet.
-TO BUILD: dx build vep_loftee_parallel/ --destination <PROJECT-ID>:<PATH-TO-APPLET-DEST>
-TO BUILD: dx build vep_loftee_parallel/ --destination project-REDACTED:/users/sl/ -f
+TO BUILD: dx build applets/vep_loftee_parallel/ --destination <PROJECT-ID>:<PATH-TO-APPLET-DEST>
+TO BUILD: dx build applets/vep_loftee_parallel/ --destination project-REDACTED:/users/sl/ -f
 """
 
 import os

@@ -1,3 +1,9 @@
+#!/usr/bin/env python3
+
+"""
+TO BUILD: dx build applets/extract_phenotypes_and_covariates/ --destination <PROJECT-ID>:<PATH-TO-APPLET-DEST>
+"""
+
 import os
 import subprocess
 import dxpy
