@@ -9,6 +9,7 @@ import subprocess
 import dxpy
 import polars as pl
 from collections import defaultdict
+from scipy.special import ndtri
 
 PROJECT_ID = os.environ.get("DX_PROJECT_CONTEXT_ID")
 
@@ -66,6 +67,9 @@ def extract_phenotypes(fields_list, dataset_id, batch_size=25):
         assert next_df.height == chunk_dfs[0].height, f"Batch size mismatch at chunk {i}!"
         final_df = final_df.join(next_df, on="eid", how="inner")
 
+    # Remove "participant." from field name since we are not 
+    unique_fields = [i.replace('participant.', "") for i in unique_fields]
+    
     return final_df, unique_fields
 
 def ukb_gen_related_with_data(data: pl.DataFrame, ukb_with_data: set, cutoff: float = 0.0884) -> pl.DataFrame:
@@ -203,8 +207,61 @@ def apply_statin_correction(df: pl.DataFrame) -> pl.DataFrame:
 
     return df
 
+def apply_quantile_transform(df: pl.DataFrame, phenotype_list: list) -> pl.DataFrame:
+    
+    c = 3/8  # Blom's constant for inverse normal transformation (prevents infinite values at the tails)
+    
+    # Create a long phenotypes files
+    long_phenos_int = (
+        df
+        .select(['eid'] + phenotype_list)
+        .unpivot(
+            index='eid',
+            on=phenotype_list,
+            variable_name='phenotype',
+            value_name='pheno_value'
+        )
+        .lazy()  # Use Lazy mode for better memory/query optimization
+        .with_columns(
+            # Calculate rank and group size using native Rust engine
+            r = pl.col("pheno_value").rank().over("phenotype"),
+            n = pl.len().over("phenotype")
+        )
+        .with_columns(
+            # Calculate the INT value calling ndtri ONCE on the whole column
+            pheno_value_int = ((pl.col("r") - c) / (pl.col("n") - 2*c + 1)).map_batches(ndtri)
+        )
+        .drop(["r", "n"]) # Clean up temporary columns
+        .collect()
+    )
+
+    # Transform long to wide
+    wide_phenos = (
+        long_phenos_int
+        .drop('pheno_value')
+        .pivot(
+        on="phenotype",           
+        index="eid",              
+        values="pheno_value_int")
+    )
+    
+    # Add QT-corrected values to df
+    df = (df
+        .drop(phenotype_list)
+        .join(wide_phenos, on = 'eid', how = 'inner')
+    )
+
+    return df
+
 @dxpy.entry_point('main')
-def main(dataset_id, pheno_list_file, bim_file=None, additional_covars_file=None, subset_eur=False, subset_unrelated=False, statin_correction=False):
+def main(dataset_id, 
+        pheno_list_file, 
+        # TODO: add regenie input files here
+        bim_file=None, 
+        additional_covars_file=None, 
+        subset_eur=False, 
+        subset_unrelated=False, 
+        statin_correction=False):
     
     # ---------------------------------------------------------
     # 1. DOWNLOAD INPUT FILES & EXTRACT DATA
@@ -278,6 +335,9 @@ def main(dataset_id, pheno_list_file, bim_file=None, additional_covars_file=None
     if statin_correction:
         df = apply_statin_correction(df)
 
+    # E. Apply quantile transformation
+    df = apply_quantile_transform(df, final_pheno_list)
+
     # ---------------------------------------------------------
     # 3. FORMAT FOR REGENIE
     # ---------------------------------------------------------
@@ -324,6 +384,7 @@ def main(dataset_id, pheno_list_file, bim_file=None, additional_covars_file=None
     # 5. UPLOAD OUTPUTS BACK TO DNANEXUS
     # ---------------------------------------------------------
     print("Uploading output files back to DNAnexus...")
+    # RETURN: covariates (remove medication), qt-phenos, PRS and adjusted phenos
     return {
         "covariates": dxpy.dxlink(dxpy.upload_local_file(covar_out)),
         "phenotypes": dxpy.dxlink(dxpy.upload_local_file(pheno_out)),
