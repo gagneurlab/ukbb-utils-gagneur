@@ -499,7 +499,7 @@ def main(dataset_id,
     (
         df
         .select(['eid'] + [c for c in final_cov_list if c in df.columns])
-        .rename(covariates_field_labelling)
+        .rename(covariates_field_labelling, strict=False)
         .write_parquet(covariates_pq_out)
     )
 
@@ -507,7 +507,7 @@ def main(dataset_id,
     (
         df
         .select(['eid'] + [c for c in final_pheno_list if c in df.columns])
-        .rename(phenotypes_field_labelling)
+        .rename(phenotypes_field_labelling, strict=False)
         .write_parquet(phenos_pq_out)
     )
 
@@ -588,8 +588,8 @@ def main(dataset_id,
         # Save PRS: strip _prs suffix from PRS columns so phenotypes_field_labelling applies
         (
             PRS_df
-            .rename({f"{i}_prs": i for i in final_pheno_list})
-            .rename(phenotypes_field_labelling)
+            .rename({f"{i}_prs": i for i in final_pheno_list}, strict=False)
+            .rename(phenotypes_field_labelling, strict=False)
             .write_parquet(prs_pq_out)
         )
         
@@ -598,7 +598,7 @@ def main(dataset_id,
         # 5. CORRECT FOR COVARIATES AND PRS 
         # ---------------------------------------------------------
         corrected_phenotypes = correct_phenotypes(df, final_pheno_list, final_cov_list)
-        corrected_phenotypes.rename(phenotypes_field_labelling).write_parquet(corrected_phenos_pq_out)
+        corrected_phenotypes.rename(phenotypes_field_labelling, strict=False).write_parquet(corrected_phenos_pq_out)
 
     else:
         print("No genotype call files provided, skipping PRS calculation and phenotype correction steps.")
