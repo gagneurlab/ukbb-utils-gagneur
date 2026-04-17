@@ -77,7 +77,7 @@ def extract_phenotypes(fields_list, dataset_id, batch_size=25):
         subprocess.run(cmd, stdout=f, check=True)
     
     field_labels = (
-        pl.read_csv(out_file, separator = "\t", has_header=False)
+        pl.read_csv(field_labels_out, separator = "\t", has_header=False)
         .rename({'column_1': 'field_id', 'column_2': 'field_label'})
         .filter(pl.col('field_id').is_in(unique_fields))
     )
@@ -408,8 +408,8 @@ def main(dataset_id,
 
     cov_df, raw_cov_list, covariates_field_labelling = extract_phenotypes(covar_fields_list, dataset_id)
     # remove ancestry and medication from the covariates list
-    final_cov_list = [i for i in raw_cov_list if i in not medication_fields]
-    final_cov_list = [i for i in final_cov_list if i in not eur_field]
+    final_cov_list = [i for i in raw_cov_list if i not in medication_fields]
+    final_cov_list = [i for i in final_cov_list if i not in eur_field]
 
     # Safely extract the file ID string from the DNAnexus link dictionary
     file_id = pheno_list_file if isinstance(pheno_list_file, str) else pheno_list_file["$dnanexus_link"]
@@ -485,7 +485,7 @@ def main(dataset_id,
     df.select(final_pheno_cols).write_csv(pheno_out, separator=" ", null_value="NA")
 
     # Return to normal identifier format
-    df = df.drop('FID').rename({'IID': 'eid'})
+    # df = df.drop('FID').rename({'IID': 'eid'})
     
     # Save parquet covariates
     (
