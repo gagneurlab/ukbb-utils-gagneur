@@ -87,13 +87,19 @@ def extract_phenotypes(fields_list, dataset_id, batch_size=25):
     for row in field_labels.iter_rows():
         field = row[0].replace("participant.", "")
         label = row[1].split('|')[0].strip().lower()
-        
+
         # Remove anything that isn't a letter, number, or space
         label = re.sub(r'[^a-z0-9\s]', '', label)
-        
+
         # Replace one or more spaces with a single underscore
         label = re.sub(r'\s+', '_', label)
-        field_renaming[field] = label
+
+        # Preserve only the array suffix (_aN) so array fields that share
+        # a single label (p22009_a1..a20, p20003_a0..a47, ...) don't
+        # collapse into duplicate column names
+        m = re.search(r'(_a\d+)$', field)
+        suffix = m.group(1) if m else ""
+        field_renaming[field] = f"{label}{suffix}"
 
     # Remove "participant." from field names
     unique_fields = [i.replace('participant.', "") for i in unique_fields]
@@ -175,8 +181,10 @@ def handle_multiple_measurements(df: pl.DataFrame, pheno_list: list, field_label
             avg_exprs.append(pl.mean_horizontal(cols).alias(base_instance))
             cols_to_drop.extend(cols)
             new_phenos.append(base_instance)
-            # Add correct field label
-            field_labelling[base_instance] = field_labelling[cols[0]]
+            # Inherit the label from the first array col, but drop the _aN
+            # suffix since the averaged column is no longer array-specific
+            inherited_label = re.sub(r'_a\d+$', '', field_labelling[cols[0]])
+            field_labelling[base_instance] = inherited_label
             # remove old field labels
             for c in cols:
                 del field_labelling[c]
@@ -286,8 +294,8 @@ def apply_quantile_transform(df: pl.DataFrame, phenotype_list: list) -> pl.DataF
 
     return df
 
-def process_regenie_ouputs(PRS_out_filename: str) -> pl.DataFrame:
-    
+def process_regenie_ouputs(PRS_out_filename: str, PRS_out_folder: str) -> pl.DataFrame:
+
     # Read a mapping between between phenotype name and a filename
     PRS_phenos_to_files = (
         pl.read_csv(f"{PRS_out_filename}_prs.list", has_header = False, separator = " ")
@@ -430,7 +438,7 @@ def main(dataset_id,
     corrected_phenos_pq_out = "corrected_phenos.parquet"
     phenos_pq_out = "phenos.parquet"
     covariates_pq_out = "covariates.parquet"
-    prs_pq_out = "covariates.parquet"
+    prs_pq_out = "prs.parquet"
     
     # ---------------------------------------------------------
     # 2. RUN QC AND FILTERING 
@@ -491,7 +499,7 @@ def main(dataset_id,
     (
         df
         .select(['eid'] + [c for c in final_cov_list if c in df.columns])
-        .rename({covariates_field_labelling})
+        .rename(covariates_field_labelling)
         .write_parquet(covariates_pq_out)
     )
 
@@ -499,7 +507,7 @@ def main(dataset_id,
     (
         df
         .select(['eid'] + [c for c in final_pheno_list if c in df.columns])
-        .rename({phenotypes_field_labelling})
+        .rename(phenotypes_field_labelling)
         .write_parquet(phenos_pq_out)
     )
 
@@ -523,7 +531,7 @@ def main(dataset_id,
         dxpy.download_dxfile(bim_id, f"{genotype_calls_out}.bim")
 
         fam_id = fam_file if isinstance(fam_file, str) else fam_file["$dnanexus_link"]
-        dxpy.download_dxfile(fam_id, f"{genotype_calls_out}.bim")
+        dxpy.download_dxfile(fam_id, f"{genotype_calls_out}.fam")
 
         print("Installing conda environment...")
 
@@ -574,13 +582,13 @@ def main(dataset_id,
             raise
         
         print("Processing regenie outputs...")
-        PRS_df = process_regenie_ouputs(PRS_out_filename)
+        PRS_df = process_regenie_ouputs(PRS_out_filename, PRS_out_folder)
         df = PRS_df.join(df, on = 'eid', how = 'inner')
 
-        # Save PRS
-        PRS_df = (
+        # Save PRS: strip _prs suffix from PRS columns so phenotypes_field_labelling applies
+        (
             PRS_df
-            .rename({i: i[:-4] for i in final_pheno_list})
+            .rename({f"{i}_prs": i for i in final_pheno_list})
             .rename(phenotypes_field_labelling)
             .write_parquet(prs_pq_out)
         )
@@ -606,8 +614,8 @@ def main(dataset_id,
     return {
         "covariates": dxpy.dxlink(dxpy.upload_local_file(covariates_pq_out)),
         "phenotypes": dxpy.dxlink(dxpy.upload_local_file(phenos_pq_out)),
-        "PRS": dxpy.dxlink(dxpy.upload_local_file(prs_pq_out)) if bed_file and bed_file and fam_file else None,
-        "corrected_phenotypes": dxpy.dxlink(dxpy.upload_local_file(corrected_phenos_pq_out)) if bed_file and bed_file and fam_file else None,
+        "PRS": dxpy.dxlink(dxpy.upload_local_file(prs_pq_out)) if bed_file and bim_file and fam_file else None,
+        "corrected_phenotypes": dxpy.dxlink(dxpy.upload_local_file(corrected_phenos_pq_out)) if bed_file and bim_file and fam_file else None,
     }
 
 dxpy.run()
