@@ -22,10 +22,22 @@
       "help": "Text file containing list of covariate columns"
     },
     {
+      "name": "bed_file",
+      "class": "file",
+      "optional": true,
+      "help": "PLINK .bed file to run regenie. Will not return PRS and corrected phenotypes if left blank."
+    },
+    {
       "name": "bim_file",
       "class": "file",
       "optional": true,
-      "help": "The PLINK .bim file to extract the snplist. Will not return a snplist if left blank."
+      "help": "PLINK .bim file to run regenie. Will not return PRS and corrected phenotypes if left blank."
+    },
+    {
+      "name": "fam_file",
+      "class": "file",
+      "optional": true,
+      "help": "PLINK .fam file to run regenie. Will not return PRS and corrected phenotypes if left blank."
     },
     {
       "name": "subset_eur",
@@ -50,17 +62,22 @@
     {
       "name": "covariates",
       "class": "file",
-      "patterns": ["*.txt"]
+      "patterns": ["*.parquet"]
     },
     {
       "name": "phenotypes",
       "class": "file",
-      "patterns": ["*.txt"]
+      "patterns": ["*.parquet"]
     },
     {
-      "name": "snplist",
+      "name": "PRS",
       "class": "file",
-      "patterns": ["*.snplist"]
+      "patterns": ["*.parquet"]
+    },
+    {
+      "name": "corrected_phenotypes",
+      "class": "file",
+      "patterns": ["*.parquet"]
     }
   ],
   "runSpec": {
@@ -76,11 +93,12 @@
     "file": "extract_phenotypes_and_covariates.py",
     "systemRequirements": {
       "*": {
-        "instanceType": "mem1_ssd1_v2_x16"
+        "instanceType": "mem2_ssd1_v2_x32"
       }
     },
     "execDepends": [
-      {"name": "polars==1.33.0", "package_manager": "pip"}
+      {"name": "polars==1.33.0", "package_manager": "pip"},
+      {"name": "scikit-learn==1.8.0", "package_manager": "pip"}
     ]
   },
   "access": {"network": ["*"]}

@@ -10,6 +10,8 @@ import dxpy
 import polars as pl
 from collections import defaultdict
 from scipy.special import ndtri
+from sklearn.linear_model import LinearRegression
+import re
 
 PROJECT_ID = os.environ.get("DX_PROJECT_CONTEXT_ID")
 
@@ -66,11 +68,37 @@ def extract_phenotypes(fields_list, dataset_id, batch_size=25):
     for i, next_df in enumerate(chunk_dfs[1:]):
         assert next_df.height == chunk_dfs[0].height, f"Batch size mismatch at chunk {i}!"
         final_df = final_df.join(next_df, on="eid", how="inner")
+    
+    # Extract field labels
+    field_labels_out = 'field_labels.tsv'
+    cmd = ["dx", "extract_dataset", full_dataset_path, "--list-fields",]
+            
+    with open(field_labels_out, "w") as f:
+        subprocess.run(cmd, stdout=f, check=True)
+    
+    field_labels = (
+        pl.read_csv(out_file, separator = "\t", has_header=False)
+        .rename({'column_1': 'field_id', 'column_2': 'field_label'})
+        .filter(pl.col('field_id').is_in(unique_fields))
+    )
 
-    # Remove "participant." from field name since we are not 
+    # Create a renaming dict
+    field_renaming = {}
+    for row in field_labels.iter_rows():
+        field = row[0].replace("participant.", "")
+        label = row[1].split('|')[0].strip().lower()
+        
+        # Remove anything that isn't a letter, number, or space
+        label = re.sub(r'[^a-z0-9\s]', '', label)
+        
+        # Replace one or more spaces with a single underscore
+        label = re.sub(r'\s+', '_', label)
+        field_renaming[field] = label
+
+    # Remove "participant." from field names
     unique_fields = [i.replace('participant.', "") for i in unique_fields]
     
-    return final_df, unique_fields
+    return final_df, unique_fields, field_renaming
 
 def ukb_gen_related_with_data(data: pl.DataFrame, ukb_with_data: set, cutoff: float = 0.0884) -> pl.DataFrame:
     return data.filter(
@@ -129,7 +157,7 @@ def computed_unrelated_ids(df: pl.DataFrame, cutoff: float = 0.0884) -> pl.DataF
     
     return pl.DataFrame({"eid": unrelated_samples})
 
-def handle_multiple_measurements(df: pl.DataFrame, pheno_list: list) -> tuple[pl.DataFrame, list]:
+def handle_multiple_measurements(df: pl.DataFrame, pheno_list: list, field_labelling: dict):
     print("Checking for multiple measurements (within the same instance) to average...")
     base_to_cols = defaultdict(list)
     
@@ -147,6 +175,11 @@ def handle_multiple_measurements(df: pl.DataFrame, pheno_list: list) -> tuple[pl
             avg_exprs.append(pl.mean_horizontal(cols).alias(base_instance))
             cols_to_drop.extend(cols)
             new_phenos.append(base_instance)
+            # Add correct field label
+            field_labelling[base_instance] = field_labelling[cols[0]]
+            # remove old field labels
+            for c in cols:
+                del field_labelling[c]
             
     if avg_exprs:
         df = df.with_columns(avg_exprs).drop(cols_to_drop)
@@ -156,7 +189,7 @@ def handle_multiple_measurements(df: pl.DataFrame, pheno_list: list) -> tuple[pl
     else:
         print(" -> No multiple measurements found to average.")
         
-    return df, pheno_list
+    return df, pheno_list, field_labelling
 
 def apply_statin_correction(df: pl.DataFrame) -> pl.DataFrame:
     STATIN_CODES = [
@@ -253,11 +286,96 @@ def apply_quantile_transform(df: pl.DataFrame, phenotype_list: list) -> pl.DataF
 
     return df
 
+def process_regenie_ouputs(PRS_out_filename: str) -> pl.DataFrame:
+    
+    # Read a mapping between between phenotype name and a filename
+    PRS_phenos_to_files = (
+        pl.read_csv(f"{PRS_out_filename}_prs.list", has_header = False, separator = " ")
+        .rename({'column_1': 'phenotype', 'column_2': 'filename'})
+    )
+
+    # Read all PRS files
+    prs_outputs = []
+    for row in PRS_phenos_to_files.iter_rows():
+        phenotype = row[0]
+        filename = row[1]
+        prs_one_pheno = (
+            pl.read_csv(f"{PRS_out_folder}{filename}", separator = " ", null_values = "NA")
+            .transpose(
+                include_header=True, 
+                header_name="eid",     
+                column_names=['prs_value']  
+            )
+            .filter(pl.col("eid") != "FID_IID")
+            .filter(pl.col("eid") != "")
+            .with_columns(
+                eid = pl.col("eid").str.split("_").list.get(0).cast(pl.Int64),
+                prs_value = pl.col('prs_value').cast(pl.Float64)
+            )
+            .rename({'prs_value': f"{phenotype}_prs"})
+        )
+        prs_outputs.append(prs_one_pheno)
+    
+    # Collect all PRS files into a single dataframe
+    PRS_df = prs_outputs[0]
+    for i, next_df in enumerate(prs_outputs[1:]):
+        PRS_df = PRS_df.join(next_df, on="eid", how="inner")
+
+    return PRS_df
+
+def correct_phenotypes(df: pl.DataFrame, phenotype_list: list, covariates_list: list) -> pl.DataFrame:
+    
+    # Correct phenos one by one
+    correted_dfs = []
+    for pheno_col in phenotype_list:
+
+        # Add corresponding PRS to feature columns
+        feature_cols = covariates_list + [f'{pheno_col}_prs']
+
+        # Drop null values to residualize
+        df_per_pheno = (
+            df
+            .select(['eid', pheno_col] + feature_cols)
+            .filter(pl.col(pheno_col).is_not_null())
+            )
+
+        # Convert to NumPy for sklearn 
+        X = df_per_pheno.select(feature_cols).to_numpy()
+        y = df_per_pheno.select(pheno_col).to_numpy()
+
+        # Fit the model and get residuals
+        model = LinearRegression()
+        model.fit(X, y)
+        residuals = y - model.predict(X)
+        
+        # Put residuals into a Dataframe
+        df_per_pheno = (
+            df_per_pheno
+            .select(['eid'])
+            .with_columns(pl.Series(residuals.flatten()).cast(pl.Float64).alias(f"{pheno_col}"))
+        )
+
+        # Add null values back
+        df_per_pheno = (
+            df
+            .select(['eid'])
+            .join(df_per_pheno, on = 'eid', how = 'left', coalesce = True)
+        )
+        correted_dfs.append(df_per_pheno) 
+
+    # Collect all residuals into a single dataframe
+    corrected_df = correted_dfs[0]
+    for i, next_df in enumerate(correted_dfs[1:]):
+        corrected_df = corrected_df.join(next_df, on="eid", how="inner")    
+    
+    return corrected_df
+        
 @dxpy.entry_point('main')
 def main(dataset_id, 
         pheno_list_file, 
-        # TODO: add regenie input files here
+        bed_file=None, 
         bim_file=None, 
+        fam_file=None, 
         additional_covars_file=None, 
         subset_eur=False, 
         subset_unrelated=False, 
@@ -288,7 +406,10 @@ def main(dataset_id,
 
     covar_fields_list = standard_covars + eur_field + medication_fields + additional_covars_fields
 
-    cov_df, raw_cov_list = extract_phenotypes(covar_fields_list, dataset_id)
+    cov_df, raw_cov_list, covariates_field_labelling = extract_phenotypes(covar_fields_list, dataset_id)
+    # remove ancestry and medication from the covariates list
+    final_cov_list = [i for i in raw_cov_list if i in not medication_fields]
+    final_cov_list = [i for i in final_cov_list if i in not eur_field]
 
     # Safely extract the file ID string from the DNAnexus link dictionary
     file_id = pheno_list_file if isinstance(pheno_list_file, str) else pheno_list_file["$dnanexus_link"]
@@ -300,18 +421,23 @@ def main(dataset_id,
     with open(local_list_name, 'r') as f:
         pheno_fields_list = [line.strip() for line in f if line.strip()]
 
-    pheno_df, raw_pheno_list = extract_phenotypes(pheno_fields_list, dataset_id)
+    pheno_df, raw_pheno_list, phenotypes_field_labelling = extract_phenotypes(pheno_fields_list, dataset_id)
     
     print("Merging phenotype and covariate dataframes...")
     df = pheno_df.join(cov_df, on="eid", how="inner")
     print(f"Total merged dataset: {df.height} participants, {len(df.columns)} columns.")
 
+    corrected_phenos_pq_out = "corrected_phenos.parquet"
+    phenos_pq_out = "phenos.parquet"
+    covariates_pq_out = "covariates.parquet"
+    prs_pq_out = "covariates.parquet"
+    
     # ---------------------------------------------------------
     # 2. RUN QC AND FILTERING 
     # ---------------------------------------------------------
     
     # A. Average Multiple Measurements
-    df, final_pheno_list = handle_multiple_measurements(df, raw_pheno_list)
+    df, final_pheno_list, phenotypes_field_labelling = handle_multiple_measurements(df, raw_pheno_list, phenotypes_field_labelling)
 
     # B. Subset to EUR Ancestry
     if subset_eur:
@@ -347,48 +473,141 @@ def main(dataset_id,
         pl.col("eid").alias("IID")
     ])
 
-    # Safely pull the requested columns that survived the QC pipeline
-    final_covar_cols = ["FID", "IID"] + [c for c in raw_cov_list if c in df.columns]
+    # Safely pull the requested columns that survived the QC pipeline ()
+    final_covar_cols = ["FID", "IID"] + [c for c in final_cov_list if c in df.columns]
     final_pheno_cols = ["FID", "IID"] + [c for c in final_pheno_list if c in df.columns]
 
     covar_out = "covariates.txt"
     pheno_out = "phenotypes.txt"
-
+    
+    # Save phenos and covariates for regenie
     df.select(final_covar_cols).write_csv(covar_out, separator=" ", null_value="NA")
     df.select(final_pheno_cols).write_csv(pheno_out, separator=" ", null_value="NA")
+
+    # Return to normal identifier format
+    df = df.drop('FID').rename({'IID': 'eid'})
+    
+    # Save parquet covariates
+    (
+        df
+        .select(['eid'] + [c for c in final_cov_list if c in df.columns])
+        .rename({covariates_field_labelling})
+        .write_parquet(covariates_pq_out)
+    )
+
+    # Save parquet phenotypes
+    (
+        df
+        .select(['eid'] + [c for c in final_pheno_list if c in df.columns])
+        .rename({phenotypes_field_labelling})
+        .write_parquet(phenos_pq_out)
+    )
+
     print(f"Wrote covariates ({len(final_covar_cols)-2} cols) and phenotypes ({len(final_pheno_cols)-2} cols).")
 
     # ---------------------------------------------------------
-    # 4. PROCESS BIM FILE TO GENERATE SNPLIST
+    # 4. RUN REGENIE IF USER PROVIDED .bed, .bim and .fam FILES 
     # ---------------------------------------------------------
-    if bim_file:
-        print("Downloading bim file...")
+    if bed_file and bim_file and fam_file:
+        genotype_calls_out = "input"
+        PRS_out_folder = "./regenie_out/"
+        PRS_out_filename = f"{PRS_out_folder}file"
+        os.makedirs(PRS_out_folder, exist_ok=True)
+
+        print("Downloading genotype call files...")
         # Safely extract the file ID string from the DNAnexus link dictionary
+        bed_id = bed_file if isinstance(bed_file, str) else bed_file["$dnanexus_link"]
+        dxpy.download_dxfile(bed_id, f"{genotype_calls_out}.bed")
+
         bim_id = bim_file if isinstance(bim_file, str) else bim_file["$dnanexus_link"]
-        dxpy.download_dxfile(bim_id, "input.bim")
+        dxpy.download_dxfile(bim_id, f"{genotype_calls_out}.bim")
 
-        print("Extracting SNP list from the .bim file...")
-        # .bim files are 6 columns with no header. The variant ID is the 2nd column.
-        bim_df = pl.read_csv("input.bim", separator="\t", has_header=False, 
-                            new_columns=["CHR", "SNP", "CM", "BP", "A1", "A2"], infer_schema_length=0)
+        fam_id = fam_file if isinstance(fam_file, str) else fam_file["$dnanexus_link"]
+        dxpy.download_dxfile(fam_id, f"{genotype_calls_out}.bim")
+
+        print("Installing conda environment...")
+
+        subprocess.run("wget https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh -O miniconda.sh", shell=True)
+        subprocess.run("bash miniconda.sh -b -p $HOME/miniconda", shell=True)
+        # Add conda to the current path
+        conda_bin = os.path.expanduser("~/miniconda/bin/conda")
+
+        print("Creating REGENIE environment (this takes 3-5 minutes)...")
+        subprocess.run([
+            conda_bin, "create", "-y", "-n", "regenie_env", 
+            "--override-channels", 
+            "-c", "conda-forge", 
+            "-c", "bioconda", 
+            "regenie"
+        ], check=True)
+
+        print("Starting REGENIE Step 1...")
+        regenie_args = [
+            "regenie",
+            "--step", "1",
+            # Genotypes (to .bed without ".bed")
+            "--bed", genotype_calls_out,
+
+            # Phenotypes & Covariates
+            "--phenoFile", pheno_out,
+            "--covarFile", covar_out,
+
+            # Model Parameters
+            "--bsize", "1000",      # normally we use this parameter
+            "--qt",                 # indicate that phenos are quantitative
+            "--lowmem",             # Low-memory to not crash the session
+
+            # PRS Mode & Output
+            "--print-prs",          # Force output of .prs files (Whole-Genome Predictions)
+            "--out", PRS_out_filename
+        ]
+
+        full_cmd = [conda_bin, "run", "-n", "regenie_env"] + regenie_args
+
+        try:
+            result = subprocess.run(full_cmd, capture_output=True, text=True, check=True)
+            print(result.stdout)
+        except subprocess.CalledProcessError as e:
+            print("--- REGENIE FAILED ---")
+            print("STDOUT:", e.stdout)
+            print("STDERR:", e.stderr) 
+            raise
         
-        snplist_out = "snplist.snplist"
-        # Write only the SNP column, no header, for REGENIE
-        bim_df.select("SNP").write_csv(snplist_out, include_header=False)
-        print(f"Extracted {bim_df.height} variants into snplist.")
+        print("Processing regenie outputs...")
+        PRS_df = process_regenie_ouputs(PRS_out_filename)
+        df = PRS_df.join(df, on = 'eid', how = 'inner')
+
+        # Save PRS
+        PRS_df = (
+            PRS_df
+            .rename({i: i[:-4] for i in final_pheno_list})
+            .rename(phenotypes_field_labelling)
+            .write_parquet(prs_pq_out)
+        )
+        
+        
+        # ---------------------------------------------------------
+        # 5. CORRECT FOR COVARIATES AND PRS 
+        # ---------------------------------------------------------
+        corrected_phenotypes = correct_phenotypes(df, final_pheno_list, final_cov_list)
+        corrected_phenotypes.rename(phenotypes_field_labelling).write_parquet(corrected_phenos_pq_out)
+
     else:
-        print("No bim file provided, skipping snplist generation.")
-        snplist_out = None
+        print("No genotype call files provided, skipping PRS calculation and phenotype correction steps.")
+        corrected_phenotypes = None
+        
 
     # ---------------------------------------------------------
-    # 5. UPLOAD OUTPUTS BACK TO DNANEXUS
+    # 6. UPLOAD OUTPUTS BACK TO DNANEXUS
     # ---------------------------------------------------------
+
     print("Uploading output files back to DNAnexus...")
     # RETURN: covariates (remove medication), qt-phenos, PRS and adjusted phenos
     return {
-        "covariates": dxpy.dxlink(dxpy.upload_local_file(covar_out)),
-        "phenotypes": dxpy.dxlink(dxpy.upload_local_file(pheno_out)),
-        "snplist": dxpy.dxlink(dxpy.upload_local_file(snplist_out)) if snplist_out else None
+        "covariates": dxpy.dxlink(dxpy.upload_local_file(covariates_pq_out)),
+        "phenotypes": dxpy.dxlink(dxpy.upload_local_file(phenos_pq_out)),
+        "PRS": dxpy.dxlink(dxpy.upload_local_file(prs_pq_out)) if bed_file and bed_file and fam_file else None,
+        "corrected_phenotypes": dxpy.dxlink(dxpy.upload_local_file(corrected_phenos_pq_out)) if bed_file and bed_file and fam_file else None,
     }
 
 dxpy.run()
