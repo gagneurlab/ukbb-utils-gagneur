@@ -94,12 +94,10 @@ def extract_phenotypes(fields_list, dataset_id, batch_size=25):
         # Replace one or more spaces with a single underscore
         label = re.sub(r'\s+', '_', label)
 
-        # Preserve only the array suffix (_aN) so array fields that share
-        # a single label (p22009_a1..a20, p20003_a0..a47, ...) don't
-        # collapse into duplicate column names
-        m = re.search(r'(_a\d+)$', field)
-        suffix = m.group(1) if m else ""
-        field_renaming[field] = f"{label}{suffix}"
+        # Append the field ID so that fields sharing the same label
+        # (e.g. p22009_a1..a20 all labelled "Genetic principal components")
+        # don't collide after renaming
+        field_renaming[field] = f"{label}_{field}"
 
     # Remove "participant." from field names
     unique_fields = [i.replace('participant.', "") for i in unique_fields]
