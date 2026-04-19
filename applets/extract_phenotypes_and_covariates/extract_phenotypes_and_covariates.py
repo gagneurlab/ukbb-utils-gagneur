@@ -306,7 +306,7 @@ def process_regenie_ouputs(PRS_out_filename: str, PRS_out_folder: str) -> pl.Dat
         phenotype = row[0]
         filename = row[1]
         prs_one_pheno = (
-            pl.read_csv(f"{PRS_out_folder}{filename}", separator = " ", null_values = "NA")
+            pl.read_csv(filename, separator = " ", null_values = "NA")
             .transpose(
                 include_header=True, 
                 header_name="eid",     
