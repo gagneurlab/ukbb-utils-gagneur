@@ -148,7 +148,7 @@ def post_process_vep(vep_lf, metadata_parquet_path, gene_list=None, biotypes_fil
         lf.join(dummies.lazy(), on="row_nr", how="left")
         .drop("row_nr")
         .unique()
-        .rename({'gene': 'region'})
+        .rename({'gene': 'gene_id'})
     )
     return processed_lf
 
