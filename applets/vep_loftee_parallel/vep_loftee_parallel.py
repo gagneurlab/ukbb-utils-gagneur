@@ -61,30 +61,34 @@ def parquet_to_vcf(parquet_path, vcf_path):
         f.write("##fileformat=VCFv4.2\n")
         f.write(df_vcf.write_csv(separator="\t", include_header=True))
 
-def _parse_vep_extra_col(lf: pl.LazyFrame) -> pl.LazyFrame:
+def _parse_vep_extra_col(lf: pl.LazyFrame, use_polyphen: bool = False) -> pl.LazyFrame:
     """
-    Extracts strict LOFTEE fields from the VEP 'extra' column natively in Polars.
-    This replaces the slow Python string-split loop to ensure the pipeline remains lazy.
+    Extracts LOFTEE (and optionally PolyPhen2) fields from the VEP 'extra' column.
     """
     logger.info("Extracting LOFTEE and standard fields from 'extra' column...")
-    
-    # Check if 'extra' exists in the lazy schema
+
     if "extra" not in lf.collect_schema().names():
         return lf
 
     extra_exprs = [
-        # The (?:^|;) regex ensures we match the key exactly, whether it's at the start or middle
         pl.col("extra").str.extract(r"(?:^|;)LoF=([^;]*)", 1).alias("lof"),
         pl.col("extra").str.extract(r"(?:^|;)LoF_filter=([^;]*)", 1).alias("lof_filter"),
         pl.col("extra").str.extract(r"(?:^|;)LoF_flags=([^;]*)", 1).alias("lof_flags"),
         pl.col("extra").str.extract(r"(?:^|;)LoF_info=([^;]*)", 1).alias("lof_info"),
-        pl.col("extra").str.extract(r"(?:^|;)IMPACT=([^;]*)", 1).alias("impact")
+        pl.col("extra").str.extract(r"(?:^|;)IMPACT=([^;]*)", 1).alias("impact"),
     ]
-    
-    # Apply the extractions and drop the heavy original text column
+
+    if use_polyphen:
+        # PolyPhen2 format: PolyPhen=possibly_damaging(0.876)
+        extra_exprs += [
+            pl.col("extra").str.extract(r"(?:^|;)PolyPhen=([^(;]+)", 1).alias("polyphen_prediction"),
+            pl.col("extra").str.extract(r"(?:^|;)PolyPhen=[^(]*\(([^)]*)\)", 1)
+                .cast(pl.Float32).alias("polyphen_score"),
+        ]
+
     return lf.with_columns(extra_exprs).drop("extra")
 
-def post_process_vep(vep_lf, metadata_parquet_path, gene_list=None, biotypes_filter=None, use_loftee=True):
+def post_process_vep(vep_lf, metadata_parquet_path, gene_list=None, biotypes_filter=None, use_loftee=True, use_polyphen=False):
     """
     Takes raw VEP TSV data, joins original variant metadata, applies filters,
     parses extras, generates dummies, and returns a processed LazyFrame.
@@ -103,7 +107,7 @@ def post_process_vep(vep_lf, metadata_parquet_path, gene_list=None, biotypes_fil
     lf = lf.rename({col: col.lower() for col in lf.collect_schema().names()})
 
     # 2. Extract specific fields from the 'extra' column
-    lf = _parse_vep_extra_col(lf)
+    lf = _parse_vep_extra_col(lf, use_polyphen=use_polyphen)
 
     # 3. Apply Gene & Biotype Filters
     if gene_list:
@@ -154,7 +158,7 @@ def post_process_vep(vep_lf, metadata_parquet_path, gene_list=None, biotypes_fil
 
 
 @dxpy.entry_point("process_chunk")
-def process_chunk(chunk_file, vep_version, use_loftee):
+def process_chunk(chunk_file, vep_version, use_loftee, use_polyphen=False):
     # 1. DEFINE & INITIALIZE PATHS
     PLUGINS_DIR = os.path.join(VEP_DATA, "Plugins")
     
@@ -236,6 +240,8 @@ def process_chunk(chunk_file, vep_version, use_loftee):
     logger.info("Verify input is visible inside container via the cache mount...")
     run(f"docker run --rm -v {VEP_DATA}:{CONTAINER_CACHE} {docker_tag} ls -la {CONTAINER_CACHE}/input.vcf")
 
+    polyphen_flag = "--polyphen s " if use_polyphen else ""
+
     vep_cmd = (
         f"docker run --rm "
         f"-v {VEP_DATA}:{CONTAINER_CACHE} "
@@ -246,7 +252,7 @@ def process_chunk(chunk_file, vep_version, use_loftee):
         f"--fork 12 "
         f"--af_gnomadg --af_gnomade "
         f"--total_length --no_escape "
-        # f"--polyphen s "
+        f"{polyphen_flag}"
         f"--canonical --protein --biotype "
         f"--dont_skip "
         f"--per_gene "
@@ -265,7 +271,7 @@ def process_chunk(chunk_file, vep_version, use_loftee):
     return {"chunk_tsv": dxpy.dxlink(dxpy.upload_local_file(local_output))}
 
 @dxpy.entry_point("gather")
-def gather(chunk_tsvs, use_loftee, master_parquet_link, genes_to_keep_file=None, biotypes_filter=None):
+def gather(chunk_tsvs, use_loftee, master_parquet_link, genes_to_keep_file=None, biotypes_filter=None, use_polyphen=False):
     
     logger.info("Downloading chunk results...")
     local_paths = []
@@ -317,11 +323,12 @@ def gather(chunk_tsvs, use_loftee, master_parquet_link, genes_to_keep_file=None,
     # 2. APPLY POST-PROCESSING
     logger.info("Applying Post-Processing, Join, and LOFTEE transformations...")
     processed_lazy_df = post_process_vep(
-        vep_lf=full_lazy_df,                  # Make sure this argument matches your updated post_process_vep
-        metadata_parquet_path=metadata_path,  # Pass the path to the downloaded master parquet
-        gene_list=gene_list,             
-        biotypes_filter=biotypes_filter, 
-        use_loftee=use_loftee
+        vep_lf=full_lazy_df,
+        metadata_parquet_path=metadata_path,
+        gene_list=gene_list,
+        biotypes_filter=biotypes_filter,
+        use_loftee=use_loftee,
+        use_polyphen=use_polyphen,
     )
     
     # 3. Stream the processed data to the final parquet file
@@ -337,7 +344,7 @@ def gather(chunk_tsvs, use_loftee, master_parquet_link, genes_to_keep_file=None,
     return {"vep_parquet": dxpy.dxlink(dxpy.upload_local_file(output_filename))}
 
 @dxpy.entry_point("main")
-def main(variants_parquet, chunk_size, vep_version, use_loftee, genes_to_keep_file=None, biotypes_filter=None):
+def main(variants_parquet, chunk_size, vep_version, use_loftee, use_polyphen=False, genes_to_keep_file=None, biotypes_filter=None):
     input_path = "input_main.parquet"
     dxpy.download_dxfile(variants_parquet, input_path)
     df = pl.read_parquet(input_path)
@@ -354,22 +361,24 @@ def main(variants_parquet, chunk_size, vep_version, use_loftee, genes_to_keep_fi
         subjob = dxpy.new_dxjob(
             fn_name="process_chunk",
             fn_input={
-                "chunk_file": chunk_link, 
+                "chunk_file": chunk_link,
                 "vep_version": vep_version,
-                "use_loftee": use_loftee
+                "use_loftee": use_loftee,
+                "use_polyphen": use_polyphen,
             },
             instance_type="mem2_ssd1_v2_x16"
         )
         subjob_outputs.append(subjob.get_output_ref("chunk_tsv"))
-        
+
     gather_job = dxpy.new_dxjob(
-        fn_name="gather", 
+        fn_name="gather",
         fn_input={
-            "chunk_tsvs": subjob_outputs, 
+            "chunk_tsvs": subjob_outputs,
             "use_loftee": use_loftee,
-            "master_parquet_link": variants_parquet,  # 2. Pass the input link straight down to gather
-            "genes_to_keep_file": genes_to_keep_file, 
-            "biotypes_filter": biotypes_filter        
+            "use_polyphen": use_polyphen,
+            "master_parquet_link": variants_parquet,
+            "genes_to_keep_file": genes_to_keep_file,
+            "biotypes_filter": biotypes_filter,
         },
         instance_type="mem2_ssd1_v2_x16"
     )
