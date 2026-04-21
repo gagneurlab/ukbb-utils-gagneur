@@ -18,9 +18,15 @@
       "default": 500000
     },
     {
-      "name": "use_loftee", 
-      "class": "boolean", 
+      "name": "use_loftee",
+      "class": "boolean",
       "default": true
+    },
+    {
+      "name": "use_polyphen",
+      "class": "boolean",
+      "default": true,
+      "help": "Enable VEP --polyphen s flag for PolyPhen2 predictions"
     },
     {
       "name": "genes_to_keep_file",
@@ -50,7 +56,9 @@
     "execDepends": [
       {"name": "aria2"},
       {"name": "pigz"},
-      {"name": "polars==1.33.0", "package_manager": "pip"}
+      {"name": "polars==1.33.0", "package_manager": "pip"},
+      {"name": "pandas", "package_manager": "pip"},
+      {"name": "pyranges", "package_manager": "pip"}
     ]
   },
   "regionalOptions": {

@@ -10,6 +10,7 @@ import subprocess
 import dxpy
 import logging
 import polars as pl
+import pyranges as pr
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
@@ -18,9 +19,33 @@ logger = logging.getLogger(__name__)
 WORK_DIR = "/home/dnanexus"
 VEP_DATA = os.path.join(WORK_DIR, "vep_data")
 
+# Download URLs
+GENCODE_GTF_URL = (
+    "https://ftp.ebi.ac.uk/pub/databases/gencode/Gencode_human/release_39/"
+    "gencode.v39.primary_assembly.annotation.gtf.gz"
+)
+REFERENCE_FASTA_URL = (
+    "https://ftp.ebi.ac.uk/pub/databases/gencode/Gencode_human/release_39/"
+    "GRCh38.primary_assembly.genome.fa.gz"
+)
+
 def run(cmd):
     logger.info(f"$ {cmd}")
     subprocess.run(cmd, shell=True, check=True)
+
+
+def aria2c_download(url: str, outpath: str) -> bool:
+    """Download a file with aria2c. Returns True on success, False on failure."""
+    os.makedirs(os.path.dirname(outpath) or ".", exist_ok=True)
+    try:
+        run(
+            f"aria2c -x 16 -s 16 --allow-overwrite=true "
+            f"'{url}' -d '{os.path.dirname(outpath)}' -o '{os.path.basename(outpath)}'"
+        )
+        return os.path.exists(outpath)
+    except subprocess.CalledProcessError as e:
+        logger.warning(f"Download failed for {url}: {e}")
+        return False
 
 def parquet_to_vcf(parquet_path, vcf_path):
     """Converts input parquet to a minimal VCF for VEP."""
@@ -61,6 +86,81 @@ def parquet_to_vcf(parquet_path, vcf_path):
         f.write("##fileformat=VCFv4.2\n")
         f.write(df_vcf.write_csv(separator="\t", include_header=True))
 
+def _convert_to_int_and_get_max(value):
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        if value is None:
+            return None
+        parts = str(value).split("-")
+        ints = [int(v) for v in parts if v.isdigit()]
+        return max(ints) if ints else None
+
+
+def _next_inframe_start_codon_distance(seq, search_init=0):
+    pos = seq.find("ATG", search_init)
+    if pos == -1:
+        return -1
+    rel = pos - search_init
+    if rel % 3 == 0:
+        return pos
+    next_init = pos + (3 - rel % 3)
+    if next_init >= len(seq):
+        return -1
+    return _next_inframe_start_codon_distance(seq, next_init)
+
+
+def _compute_next_in_frame(annos: pl.LazyFrame, fasta_path: str) -> pl.LazyFrame:
+    """Compute next in-frame ATG distance for start_lost variants (requires FASTA)."""
+    import pandas as pd
+
+    schema_names = set(annos.collect_schema().names())
+    req_cols = {"pos", "chrom", "region", "id", "cds_position", "codons", "strand", "allele"}
+    if not req_cols.issubset(schema_names):
+        logger.warning("  Missing columns for next_in_frame; skipping")
+        return annos
+
+    vep_start_lost = (
+        annos.filter(pl.col("consequence_start_lost") == 1)
+        .select(list(req_cols))
+        .collect()
+        .to_pandas()
+    )
+    snvs = vep_start_lost[vep_start_lost["allele"].str.len() == 1].copy()
+    snvs[["variant_pos_cds", "cds_length"]] = snvs["cds_position"].str.split("/", expand=True)
+    snvs = snvs[snvs["variant_pos_cds"].str.len() == 1]
+    snvs["variant_pos_cds"] = snvs["variant_pos_cds"].astype(int)
+    snvs["cds_length"] = snvs["cds_length"].astype(int)
+    snvs["Chromosome"] = snvs["chrom"].str.replace(r"^(?!chr)", "chr", regex=True)
+
+    results = []
+    for strand_val in ["1", "-1"]:
+        sub = snvs[snvs["strand"] == strand_val].copy()
+        if sub.empty:
+            continue
+        sub["Start"] = (
+            sub["pos"] - sub["variant_pos_cds"]
+            if strand_val == "1"
+            else sub["pos"] + sub["variant_pos_cds"] - 1 - sub["cds_length"]
+        )
+        sub["End"] = sub["Start"] + sub["cds_length"] + 100
+        sub["Strand"] = "+" if strand_val == "1" else "-"
+        sub_pr = pr.PyRanges(sub)
+        sub_pr.seq = pr.get_sequence(sub_pr, path=fasta_path)
+        sub = sub_pr.df.copy()
+        sub["next_in_frame"] = sub.apply(
+            lambda x: _next_inframe_start_codon_distance(x["seq"], search_init=3), axis=1
+        )
+        sub["next_in_frame_relative"] = sub["next_in_frame"] / sub["cds_length"]
+        sub.loc[sub["next_in_frame_relative"] < 0, "next_in_frame_relative"] = 1
+        results.append(sub[["region", "id", "next_in_frame_relative"]])
+
+    if results:
+        nif_pl = pl.from_pandas(pd.concat(results))
+        annos = annos.join(nif_pl.lazy(), on=["id", "region"], how="left", validate="1:1")
+    return annos
+
+
 def _parse_vep_extra_col(lf: pl.LazyFrame, use_polyphen: bool = False) -> pl.LazyFrame:
     """
     Extracts LOFTEE (and optionally PolyPhen2) fields from the VEP 'extra' column.
@@ -87,6 +187,106 @@ def _parse_vep_extra_col(lf: pl.LazyFrame, use_polyphen: bool = False) -> pl.Laz
         ]
 
     return lf.with_columns(extra_exprs).drop("extra")
+
+def add_vep_structural_features(
+    annos: pl.LazyFrame,
+    gtf_path: str,
+    ref_fasta_path: str = None,
+) -> pl.LazyFrame:
+    """
+    Add VEP-derived structural features: relative_cds_position, variant_length/indel flags,
+    dist_to_tss, gene_length, gene_name (from GTF), next_in_frame_relative (if FASTA provided).
+    """
+    schema = set(annos.collect_schema().names())
+
+    # ── Relative CDS position ─────────────────────────────────────────────
+    logger.info("  Adding relative CDS position")
+    if "cds_position" in schema:
+        try:
+            cds_parsed = (
+                annos.with_columns(
+                    pl.col("cds_position").str.split("/").alias("_cds_parts")
+                )
+                .with_columns(
+                    _length=pl.col("_cds_parts").list.get(1),
+                    _prot_pos_str=pl.col("_cds_parts").list.get(0),
+                )
+                .with_columns(
+                    _prot_pos_int=pl.col("_prot_pos_str").map_elements(
+                        _convert_to_int_and_get_max, return_dtype=pl.Int64
+                    )
+                )
+                .filter(pl.col("_prot_pos_int").is_not_null())
+                .with_columns(pl.col("_length").cast(pl.Int64, strict=False))
+                .with_columns(
+                    relative_cds_position=(
+                        pl.col("_prot_pos_int") / pl.col("_length")
+                    ).round(2)
+                )
+                .select(["id", "region", "relative_cds_position"])
+            )
+            annos = annos.join(cds_parsed, on=["id", "region"], how="left")
+        except Exception as e:
+            logger.warning(f"    relative_cds_position failed: {e}")
+
+    # ── Variant length and indel flags ────────────────────────────────────
+    logger.info("  Adding variant length and indel flags")
+    annos = annos.with_columns(
+        pl.max_horizontal(
+            [pl.col("ref").str.len_chars(), pl.col("alt").str.len_chars()]
+        ).alias("variant_length")
+    ).with_columns(
+        is_indel=(pl.col("variant_length") > 1).cast(pl.Int8),
+        is_insertion=(
+            pl.col("ref").str.len_chars() < pl.col("alt").str.len_chars()
+        ).cast(pl.Int8),
+        is_deletion=(
+            pl.col("ref").str.len_chars() > pl.col("alt").str.len_chars()
+        ).cast(pl.Int8),
+    )
+
+    # ── Distance to TSS, gene_length, gene_name from Gencode GTF ──────────
+    logger.info("  Adding dist_to_tss, gene_length, gene_name from GTF")
+    try:
+        gencode_pr = pr.read_gtf(gtf_path, as_df=True)
+        gencode_pl = pl.from_pandas(gencode_pr).filter(
+            pl.col("gene_type") == "protein_coding"
+        )
+        gencode_genes = gencode_pl.filter(pl.col("Feature") == "gene").with_columns(
+            region=pl.col("gene_id").str.split(".").list.first()
+        )
+        tss_df = gencode_genes.with_columns(
+            gene_length=pl.col("End") - pl.col("Start") + 1,
+            tss=pl.when(pl.col("Strand") == "+")
+            .then(pl.col("Start"))
+            .otherwise(pl.col("End")),
+        ).select(["region", "gene_name", "gene_length", "tss", "Strand"])
+
+        anno_tss = (
+            annos.select(["id", "pos", "region"])
+            .join(tss_df.lazy(), on="region", how="left")
+            .with_columns(
+                dist_to_tss=pl.when(pl.col("Strand") == "+")
+                .then(pl.col("pos") - pl.col("tss"))
+                .otherwise(pl.col("tss") - pl.col("pos"))
+            )
+            .select(["id", "region", "dist_to_tss", "gene_length", "gene_name"])
+        )
+        annos = annos.join(anno_tss, on=["id", "region"], how="left")
+        logger.info("    dist_to_tss computed successfully")
+    except Exception as e:
+        logger.warning(f"    dist_to_tss failed: {e}")
+
+    # ── next_in_frame_relative (start_lost, requires FASTA) ───────────────
+    if ref_fasta_path and "consequence_start_lost" in annos.collect_schema().names():
+        logger.info("  Computing next_in_frame_relative for start_lost variants")
+        try:
+            annos = _compute_next_in_frame(annos, ref_fasta_path)
+        except Exception as e:
+            logger.warning(f"    next_in_frame_relative failed: {e}")
+
+    return annos
+
 
 def post_process_vep(vep_lf, metadata_parquet_path, gene_list=None, biotypes_filter=None, use_loftee=True, use_polyphen=False):
     """
@@ -152,7 +352,7 @@ def post_process_vep(vep_lf, metadata_parquet_path, gene_list=None, biotypes_fil
         lf.join(dummies.lazy(), on="row_nr", how="left")
         .drop("row_nr")
         .unique()
-        .rename({'gene': 'gene_id'})
+        .rename({'gene': 'region'})
     )
     return processed_lf
 
@@ -272,19 +472,34 @@ def process_chunk(chunk_file, vep_version, use_loftee, use_polyphen=False):
 
 @dxpy.entry_point("gather")
 def gather(chunk_tsvs, use_loftee, master_parquet_link, genes_to_keep_file=None, biotypes_filter=None, use_polyphen=False):
-    
+
     logger.info("Downloading chunk results...")
     local_paths = []
     for idx, tsv_link in enumerate(chunk_tsvs):
         path = f"chunk_{idx}.tsv"
         dxpy.download_dxfile(tsv_link, path)
         local_paths.append(path)
-        
+
     # --- DOWNLOAD MASTER PARQUET FOR THE JOIN ---
     logger.info("Downloading master variant metadata...")
     metadata_path = "variant_metadata.parquet"
     dxpy.download_dxfile(master_parquet_link, metadata_path)
-        
+
+    # --- DOWNLOAD GENCODE GTF AND REFERENCE FASTA ---
+    logger.info("Downloading Gencode v39 GTF...")
+    gtf_path = os.path.join(WORK_DIR, "gencode.v39.primary_assembly.annotation.gtf.gz")
+    ok_gtf = aria2c_download(GENCODE_GTF_URL, gtf_path)
+    if not ok_gtf:
+        logger.warning("GTF download failed; structural features will be skipped")
+        gtf_path = None
+
+    logger.info("Downloading Gencode v39 reference FASTA...")
+    fasta_path = os.path.join(WORK_DIR, "GRCh38.primary_assembly.genome.fa.gz")
+    ok_fasta = aria2c_download(REFERENCE_FASTA_URL, fasta_path)
+    if not ok_fasta:
+        logger.warning("FASTA download failed; next_in_frame features will be skipped")
+        fasta_path = None
+
     # --- Handle TXT Gene List ---
     gene_list = None
     if genes_to_keep_file:
@@ -330,16 +545,27 @@ def gather(chunk_tsvs, use_loftee, master_parquet_link, genes_to_keep_file=None,
         use_loftee=use_loftee,
         use_polyphen=use_polyphen,
     )
+
+    # 3. ADD VEP STRUCTURAL FEATURES
+    if gtf_path:
+        logger.info("Adding VEP structural features (CDS position, indel flags, TSS distance, gene annotations)...")
+        processed_lazy_df = add_vep_structural_features(
+            annos=processed_lazy_df,
+            gtf_path=gtf_path,
+            ref_fasta_path=fasta_path if fasta_path else None,
+        )
+    else:
+        logger.warning("Skipping structural features (GTF unavailable)")
     
-    # 3. Stream the processed data to the final parquet file
+    # 4. Stream the processed data to the final parquet file
     output_filename = "variants_vep_annotated.parquet"
     logger.info(f"Streaming final merged data to {output_filename}...")
-    
+
     processed_lazy_df.sink_parquet(
         output_filename,
         engine='streaming'
     )
-    
+
     logger.info("Gather step complete!")
     return {"vep_parquet": dxpy.dxlink(dxpy.upload_local_file(output_filename))}
 
