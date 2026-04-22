@@ -248,7 +248,16 @@ def add_vep_structural_features(
     # ── Distance to TSS, gene_length, gene_name from Gencode GTF ──────────
     logger.info("  Adding dist_to_tss, gene_length, gene_name from GTF")
     try:
-        gencode_pr = pr.read_gtf(gtf_path, as_df=True)
+        # Decompress GTF if gzipped
+        gtf_to_read = gtf_path
+        if gtf_path.endswith('.gz'):
+            uncompressed_gtf = gtf_path.replace('.gz', '')
+            if not os.path.exists(uncompressed_gtf):
+                logger.info(f"  Decompressing GTF from {gtf_path} to {uncompressed_gtf}")
+                run(f"pigz -d -k {gtf_path}")  # -k keeps the .gz file
+            gtf_to_read = uncompressed_gtf
+
+        gencode_pr = pr.read_gtf(gtf_to_read, as_df=True)
         gencode_pl = pl.from_pandas(gencode_pr).filter(
             pl.col("gene_type") == "protein_coding"
         )
@@ -278,12 +287,21 @@ def add_vep_structural_features(
         logger.warning(f"    dist_to_tss failed: {e}")
 
     # ── next_in_frame_relative (start_lost, requires FASTA) ───────────────
-    if ref_fasta_path and "consequence_start_lost" in annos.collect_schema().names():
-        logger.info("  Computing next_in_frame_relative for start_lost variants")
-        try:
-            annos = _compute_next_in_frame(annos, ref_fasta_path)
-        except Exception as e:
-            logger.warning(f"    next_in_frame_relative failed: {e}")
+    if ref_fasta_path:
+        schema_names = annos.collect_schema().names()
+        # Check for start_lost consequence in multiple possible column names
+        has_start_lost = any(
+            col for col in schema_names
+            if 'start_lost' in col.lower()
+        )
+        if has_start_lost:
+            logger.info("  Computing next_in_frame_relative for start_lost variants")
+            try:
+                annos = _compute_next_in_frame(annos, ref_fasta_path)
+            except Exception as e:
+                logger.warning(f"    next_in_frame_relative failed: {e}")
+        else:
+            logger.info("  No start_lost consequences found; skipping next_in_frame_relative")
 
     return annos
 
@@ -494,11 +512,21 @@ def gather(chunk_tsvs, use_loftee, master_parquet_link, genes_to_keep_file=None,
         gtf_path = None
 
     logger.info("Downloading Gencode v39 reference FASTA...")
-    fasta_path = os.path.join(WORK_DIR, "GRCh38.primary_assembly.genome.fa.gz")
-    ok_fasta = aria2c_download(REFERENCE_FASTA_URL, fasta_path)
+    fasta_gz_path = os.path.join(WORK_DIR, "GRCh38.primary_assembly.genome.fa.gz")
+    ok_fasta = aria2c_download(REFERENCE_FASTA_URL, fasta_gz_path)
     if not ok_fasta:
         logger.warning("FASTA download failed; next_in_frame features will be skipped")
         fasta_path = None
+    else:
+        # Decompress FASTA
+        fasta_path = fasta_gz_path.replace('.gz', '')
+        logger.info(f"Decompressing FASTA from {fasta_gz_path} to {fasta_path}")
+        run(f"pigz -d -k {fasta_gz_path}")  # -k keeps the .gz file
+        if not os.path.exists(fasta_path):
+            logger.warning(f"FASTA decompression failed; file not found at {fasta_path}")
+            fasta_path = None
+        else:
+            logger.info(f"FASTA decompressed successfully at {fasta_path}")
 
     # --- Handle TXT Gene List ---
     gene_list = None
