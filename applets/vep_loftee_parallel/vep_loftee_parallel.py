@@ -552,7 +552,7 @@ def gather(chunk_tsvs, use_loftee, master_parquet_link, genes_to_keep_file=None,
         processed_lazy_df = add_vep_structural_features(
             annos=processed_lazy_df,
             gtf_path=gtf_path,
-            ref_fasta_path=fasta_path if fasta_path else None,
+            ref_fasta_path=fasta_path,
         )
     else:
         logger.warning("Skipping structural features (GTF unavailable)")
