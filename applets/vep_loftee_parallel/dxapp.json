@@ -56,6 +56,7 @@
     "execDepends": [
       {"name": "aria2"},
       {"name": "pigz"},
+      {"name": "pyarrow", "package_manager": "pip"},
       {"name": "polars==1.33.0", "package_manager": "pip"},
       {"name": "pandas", "package_manager": "pip"},
       {"name": "pyranges", "package_manager": "pip"}
