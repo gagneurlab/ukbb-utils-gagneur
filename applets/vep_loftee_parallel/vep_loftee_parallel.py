@@ -125,8 +125,12 @@ def _compute_next_in_frame(annos: pl.LazyFrame, fasta_path: str) -> pl.LazyFrame
         .select(list(req_cols))
         .collect()
         .to_pandas()
+        .dropna(subset=["cds_position", "allele", "strand"])
     )
     snvs = vep_start_lost[vep_start_lost["allele"].str.len() == 1].copy()
+    if snvs.empty:
+        logger.info("  No start_lost SNVs with usable cds_position; skipping next_in_frame")
+        return annos
     snvs[["variant_pos_cds", "cds_length"]] = snvs["cds_position"].str.split("/", expand=True)
     snvs = snvs[snvs["variant_pos_cds"].str.len() == 1]
     snvs["variant_pos_cds"] = snvs["variant_pos_cds"].astype(int)
@@ -157,7 +161,7 @@ def _compute_next_in_frame(annos: pl.LazyFrame, fasta_path: str) -> pl.LazyFrame
 
     if results:
         nif_pl = pl.from_pandas(pd.concat(results))
-        annos = annos.join(nif_pl.lazy(), on=["id", "region"], how="left", validate="1:1")
+        annos = annos.join(nif_pl.lazy(), on=["id", "region"], how="left")
     return annos
 
 
@@ -224,6 +228,7 @@ def add_vep_structural_features(
                     ).round(2)
                 )
                 .select(["id", "region", "relative_cds_position"])
+                .unique(subset=["id", "region"])
             )
             annos = annos.join(cds_parsed, on=["id", "region"], how="left")
         except Exception as e:
@@ -247,59 +252,41 @@ def add_vep_structural_features(
 
     # ── Distance to TSS, gene_length, gene_name from Gencode GTF ──────────
     logger.info("  Adding dist_to_tss, gene_length, gene_name from GTF")
-    try:
-        # Decompress GTF if gzipped
-        gtf_to_read = gtf_path
-        if gtf_path.endswith('.gz'):
-            uncompressed_gtf = gtf_path.replace('.gz', '')
-            if not os.path.exists(uncompressed_gtf):
-                logger.info(f"  Decompressing GTF from {gtf_path} to {uncompressed_gtf}")
-                run(f"pigz -d -k {gtf_path}")  # -k keeps the .gz file
-            gtf_to_read = uncompressed_gtf
+    gencode_pr = pr.read_gtf(gtf_path, as_df=True)
+    gencode_pl = pl.from_pandas(gencode_pr).filter(
+        pl.col("gene_type") == "protein_coding"
+    )
+    gencode_genes = gencode_pl.filter(pl.col("Feature") == "gene").with_columns(
+        region=pl.col("gene_id").str.split(".").list.first()
+    )
+    tss_df = gencode_genes.with_columns(
+        gene_length=pl.col("End") - pl.col("Start") + 1,
+        tss=pl.when(pl.col("Strand") == "+")
+        .then(pl.col("Start"))
+        .otherwise(pl.col("End")),
+    ).select(["region", "gene_name", "gene_length", "tss", "Strand"]).unique(subset=["region"])
 
-        gencode_pr = pr.read_gtf(gtf_to_read, as_df=True)
-        gencode_pl = pl.from_pandas(gencode_pr).filter(
-            pl.col("gene_type") == "protein_coding"
+    anno_tss = (
+        annos.select(["id", "pos", "region"])
+        .join(tss_df.lazy(), on="region", how="left")
+        .with_columns(
+            dist_to_tss=pl.when(pl.col("Strand") == "+")
+            .then(pl.col("pos") - pl.col("tss"))
+            .otherwise(pl.col("tss") - pl.col("pos"))
         )
-        gencode_genes = gencode_pl.filter(pl.col("Feature") == "gene").with_columns(
-            region=pl.col("gene_id").str.split(".").list.first()
-        )
-        tss_df = gencode_genes.with_columns(
-            gene_length=pl.col("End") - pl.col("Start") + 1,
-            tss=pl.when(pl.col("Strand") == "+")
-            .then(pl.col("Start"))
-            .otherwise(pl.col("End")),
-        ).select(["region", "gene_name", "gene_length", "tss", "Strand"])
-
-        anno_tss = (
-            annos.select(["id", "pos", "region"])
-            .join(tss_df.lazy(), on="region", how="left")
-            .with_columns(
-                dist_to_tss=pl.when(pl.col("Strand") == "+")
-                .then(pl.col("pos") - pl.col("tss"))
-                .otherwise(pl.col("tss") - pl.col("pos"))
-            )
-            .select(["id", "region", "dist_to_tss", "gene_length", "gene_name"])
-        )
-        annos = annos.join(anno_tss, on=["id", "region"], how="left")
-        logger.info("    dist_to_tss computed successfully")
-    except Exception as e:
-        logger.warning(f"    dist_to_tss failed: {e}")
+        .select(["id", "region", "dist_to_tss", "gene_length", "gene_name"])
+        .unique(subset=["id", "region"])
+    )
+    annos = annos.join(anno_tss, on=["id", "region"], how="left")
+    logger.info("    dist_to_tss computed successfully")
 
     # ── next_in_frame_relative (start_lost, requires FASTA) ───────────────
     if ref_fasta_path:
         schema_names = annos.collect_schema().names()
-        # Check for start_lost consequence in multiple possible column names
-        has_start_lost = any(
-            col for col in schema_names
-            if 'start_lost' in col.lower()
-        )
+        has_start_lost = any('start_lost' in col.lower() for col in schema_names)
         if has_start_lost:
             logger.info("  Computing next_in_frame_relative for start_lost variants")
-            try:
-                annos = _compute_next_in_frame(annos, ref_fasta_path)
-            except Exception as e:
-                logger.warning(f"    next_in_frame_relative failed: {e}")
+            annos = _compute_next_in_frame(annos, ref_fasta_path)
         else:
             logger.info("  No start_lost consequences found; skipping next_in_frame_relative")
 
