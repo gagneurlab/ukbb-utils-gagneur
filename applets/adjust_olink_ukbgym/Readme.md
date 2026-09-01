@@ -1,49 +1,26 @@
 <!-- dx-header -->
 # Adjust Olink proteomics (DNAnexus Platform App)
 
-Preprocess Olink proteomics data, adjust for polygenic risk scores (PRS) via per-protein regression, and detect outliers using the Protrider autoencoder.
+Normalises Olink protein levels, regresses out the REGENIE polygenic risk scores per protein (OLS), and
+runs Protrider — an autoencoder — on the residuals to flag outliers.
+
+Steps: preprocess the Olink CSV (optionally subset to `sample_list`) → aggregate the `.prs` files into
+one samples × proteins table → per-protein OLS regression against the PRS → Protrider on the residuals.
+
+The Olink CSV must be exported from the dataset with `table-exporter` (entity `olink_instance_0`) before
+running this applet.
 <!-- /dx-header -->
 
-## Inputs
+Inputs, outputs and example commands: see the [repository README](../../README.md).
 
-| Name | Type | Required | Description |
-|---|---|---|---|
-| `input_csv` | file | Yes | Olink CSV file exported using TableExporter |
-| `regenie_step_1_prs` | array:file | No | `.prs` files from regenie step 1 output |
-| `regenie_step_1_prs_list` | file | No | `.list` file mapping gene names to `.prs` filenames (space-separated, no header) |
-| `sample_list` | file | No | Line-separated text file of sample IDs to include |
+## Developer notes
 
-## Output
+The applet is a thin shell wrapper around the
+[`ghcr.io/gtsitsiridis/protadjust`](https://github.com/gtsitsiridis/protadjust) Docker image. Each run
+pulls the image, downloads the inputs, runs `protadjust` with the working directory mounted at `/data`,
+and uploads `output/adjusted_proteomics.parquet`. The image is pinned to `:latest` via
+`PROTADJUST_IMAGE` in [`src/adjust_olink_ukbgym.sh`](src/adjust_olink_ukbgym.sh), so a new image release
+does not require rebuilding the applet.
 
-| Name | Type | Description |
-|---|---|---|
-| `output_parquet` | file | Protrider-adjusted protein abundance values (`adjusted_proteomics.parquet`) |
-
-## Prerequisites
-
-`input_csv` must be exported from the UKB RAP dataset before running this applet. Use the `table-exporter` app:
-
-```bash
-dx run table-exporter \
-  -idataset_or_cohort_or_dashboard=record-REDACTED \
-  -ientity="olink_instance_0" \
-  -ioutput="olink_export" \
-  -icoding_option="RAW" \
-  -iheader_style="FIELD-NAME" \
-  --destination="/processed_data/olink/raw/" \
-  --priority normal \
-  --instance-type="mem1_ssd1_v2_x16"
-```
-
-This produces the CSV at `/processed_data/olink/raw/olink_export.csv` on the platform. Pass that file as `input_csv`.
-
-## Pipeline steps
-
-1. **Preprocess Olink** — convert CSV to parquet, optionally filter to `sample_list`, normalise using the Olink assay helper file
-2. **Aggregate PRS** — download all `.prs` files and combine into a single `prs.parquet` (samples × proteins)
-3. **PRS regression** — per-protein OLS regression against PRS scores; output is residuals parquet
-4. **Protrider** — autoencoder-based outlier detection on the PRS residuals
-
-## Instance type
-
-Default instance: `mem1_ssd1_v2_x16` (16 cores, ~120 GB RAM).
+Protrider is memory-hungry. The default instance is `mem1_ssd1_v2_x16`; override it at launch with
+`--instance-type mem2_ssd1_v2_x32` if a run runs out of memory.
