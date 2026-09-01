@@ -2,7 +2,6 @@
 
 """
 TO BUILD: dx build applets/vep_loftee_parallel/ --destination <PROJECT-ID>:<PATH-TO-APPLET-DEST>
-TO BUILD: dx build applets/vep_loftee_parallel/ --destination project-REDACTED:/users/sl/ -f
 """
 
 import os
