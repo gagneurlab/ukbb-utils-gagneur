@@ -1,0 +1,103 @@
+{
+  "name": "bcf_to_gt_parquet",
+  "title": "BCF to GT Parquet (QC + Consolidate)",
+  "summary": "QC a batch of BCF/VCF files in parallel, then consolidate to gt_long.parquet and variant_metadata.parquet",
+  "dxapi": "1.0.0",
+  "inputSpec": [
+    {
+      "name": "input_file_list",
+      "label": "Input file list (CSV or Parquet)",
+      "class": "file",
+      "patterns": ["*.csv", "*.parquet"],
+      "help": "CSV or Parquet with columns: vcf_file_id, vcf_index_id. Each row is one BCF/index pair to process."
+    },
+    {
+      "name": "af_threshold",
+      "label": "Allele frequency threshold",
+      "class": "float",
+      "default": 0.001,
+      "optional": true,
+      "help": "MAF threshold for filtering (default: 0.001)"
+    },
+    {
+      "name": "min_gq",
+      "label": "Minimum GQ",
+      "class": "int",
+      "default": 10,
+      "optional": true,
+      "help": "Genotype quality threshold; at or below is set to missing (default: 10)"
+    },
+    {
+      "name": "min_lad",
+      "label": "Minimum LAD sum",
+      "class": "int",
+      "default": 8,
+      "optional": true,
+      "help": "Minimum sum of LAD allele depths; below is set to missing (default: 8)"
+    },
+    {
+      "name": "max_missing",
+      "label": "Max missing fraction",
+      "class": "float",
+      "default": 0.1,
+      "optional": true,
+      "help": "Maximum fraction of missing genotypes per variant (default: 0.1)"
+    },
+    {
+      "name": "fasta_ref",
+      "label": "Reference FASTA",
+      "class": "file",
+      "optional": true,
+      "patterns": ["*.fa", "*.fasta", "*.fa.gz", "*.fasta.gz"],
+      "help": "Reference FASTA for bcftools norm (optional, shared across all process_file subjobs)"
+    },
+    {
+      "name": "fasta_ref_index",
+      "label": "Reference FASTA index (.fai)",
+      "class": "file",
+      "optional": true,
+      "patterns": ["*.fai"],
+      "help": "Samtools .fai index for the reference FASTA (required if fasta_ref is provided)"
+    }
+  ],
+  "outputSpec": [
+    {
+      "name": "gt_long_parquet",
+      "label": "Long-format genotype Parquet",
+      "class": "file",
+      "patterns": ["*.parquet"],
+      "help": "Consolidated sparse non-ref genotypes: id, sample, gt"
+    },
+    {
+      "name": "variant_metadata_parquet",
+      "label": "Variant metadata Parquet",
+      "class": "file",
+      "patterns": ["*.parquet"],
+      "help": "Per-variant stats: id, chrom, pos, ref, alt, sc_cohort, ac_cohort, mac_cohort"
+    }
+  ],
+  "runSpec": {
+    "interpreter": "python3",
+    "file": "src/code.py",
+    "distribution": "Ubuntu",
+    "release": "24.04",
+    "version": "0",
+    "execDepends": [{ "name": "polars==1.33.0", "package_manager": "pip" }],
+    "timeoutPolicy": {
+      "*": { "hours": 24 }
+    },
+    "restartableEntryPoints": "all"
+  },
+  "access": {
+    "network": ["*"]
+  },
+  "regionalOptions": {
+    "aws:eu-west-2": {
+      "systemRequirements": {
+        "main": { "instanceType": "mem1_ssd1_v2_x2" },
+        "process_file": { "instanceType": "mem2_ssd1_v2_x2" },
+        "gather": { "instanceType": "mem3_ssd1_v2_x16" }
+      }
+    }
+  }
+}
