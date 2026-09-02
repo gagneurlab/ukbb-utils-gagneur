@@ -1,7 +1,6 @@
 # DeepRVAT-WGS
 
 DNAnexus applets for working with UKB data, particularly for running [UKBGym](https://github.com/gagneurlab/ukbbgym). 
-<!-- TODO add UKBGym link -->
 Each applet is one step of the pipeline and runs on the RAP as a standalone job.
 All applets listed below need to be run in order to prepare required UKBGym data. 
 
@@ -17,6 +16,7 @@ Olink: prepare_regenie_olink_inputs ──▶ regenie ──▶ adjust_olink_ukb
 ## Setup
 
 ```bash
+pip install dxpy
 dx login          # authenticate against the RAP
 dx select         # pick a project, e.g. ukb-gagneur
 ```
@@ -37,12 +37,34 @@ dx run <applet_name> -i<input>=<value> --destination /path/for/outputs/
 
 Applets can also be run from the RAP web UI.
 
+## Input file lists
+
+Every list-type input the applets need — file manifests, UKB field IDs, gene and sample lists — lives
+in [`ukbgym_file_lists/`](ukbgym_file_lists/).Upload the whole directory to the project once and point the applets at it from there:
+
+```bash
+dx upload -r ukbgym_file_lists/ --destination /
+```
+
+That creates `/ukbgym_file_lists/` in the project, which is the path used in every example below.
+| File | Used by | As input |
+|---|---|---|
+| `ukbgym_gene_vcf_files.parquet` | `bcf_qc_to_parquet` | `input_file_list` |
+| `ukbbgym_gene_list.txt` (optional) | `vep_loftee_parallel` | `genes_to_keep_file` |
+| `ukbbgym_trait_fieldIDs.txt` | `extract_phenotypes_and_covariates` | `pheno_list_file` |
+| `ukbbgym_covariate_fieldIDs.txt` | `extract_phenotypes_and_covariates` | `additional_covars_file` |
+| `olink_covariate_fields.txt` | `table-exporter` (Olink covariates) | `field_names_file_txt` |
+| `olink_fields.txt` | `table-exporter` (Olink levels) | `field_names_file_txt` |
+| `olink_covariate_field_mapping.parquet` | `prepare_regenie_olink_inputs` | `covariate_mapping` |
+| `olink_samples.txt` | `adjust_olink_ukbgym` | `sample_list` |
+
+
 ---
 
 ## Prepare and annotate genotypes
 
 ### `bcf_qc_to_parquet` — QC BCF WGS genotypes and convert to parquet
-<!-- TODO add the file list for ukbgym -->
+
 Runs genotype- and variant-level QC on a batch of BCF/VCF files and
 consolidates the results into a long genotype and variant metadata parquet files.
 
@@ -58,7 +80,7 @@ dx upload GRCh38_full_analysis_set_plus_decoy_hla.fa.fai --destination /referenc
 
 ```bash
 dx run bcf_to_gt_parquet \
-  -iinput_file_list="/path/to/bcf_file_list.csv" \
+  -iinput_file_list="/ukbgym_file_lists/ukbgym_gene_vcf_files.parquet" \
   -iaf_threshold=0.001 \
   -ifasta_ref="/reference/GRCh38_full_analysis_set_plus_decoy_hla.fa" \
   -ifasta_ref_index="/reference/GRCh38_full_analysis_set_plus_decoy_hla.fa.fai" \
@@ -77,6 +99,7 @@ dx run vep_loftee_parallel \
   -ivep_version="113" \
   -ichunk_size=500000 \
   -iuse_loftee=true \
+  -igenes_to_keep_file="/ukbgym_file_lists/ukbbgym_gene_list.txt"
   --destination /processed_data/annotations/
 ```
 
@@ -91,14 +114,10 @@ This also runs REGENIE Step1 to obtain polygenic risk scores which are then regr
 Can be run independtly of all other steps. 
 
 ```bash
-# upload the field lists once; reuse the file IDs on later runs
-pheno_file=$(dx upload applets/extract_phenotypes_and_covariates/ukbbgym_trait_fieldIDs.txt --brief)
-covar_file=$(dx upload applets/extract_phenotypes_and_covariates/ukbbgym_covariate_fieldIDs.txt --brief)
-
 dx run extract_phenotypes_and_covariates \
   -idataset_id="record-XXXXXXXX" \
-  -ipheno_list_file="$pheno_file" \
-  -iadditional_covars_file="$covar_file" \
+  -ipheno_list_file="/ukbgym_file_lists/ukbbgym_trait_fieldIDs.txt" \
+  -iadditional_covars_file="/ukbgym_file_lists/ukbbgym_covariate_fieldIDs.txt" \
   -ibed_file="/plink/ukb.bed" -ibim_file="/plink/ukb.bim" -ifam_file="/plink/ukb.fam" \
   -isubset_eur="True" \
   -isubset_unrelated="True" \
@@ -121,12 +140,10 @@ Can be run independently of all other steps.
 
 Extract covariates: 
 ```bash
-fields_file_cov=$(dx upload olink_covariate_fields.txt --brief)
-
 dx run table-exporter \
   -idataset_or_cohort_or_dashboard=record-REDACTED \
   -ientity="participant" \
-  -ifield_names_file_txt="$fields_file_cov" \
+  -ifield_names_file_txt="/ukbgym_file_lists/olink_covariate_fields.txt" \
   -ioutput="olink_covariates_export" \
   -icoding_option="RAW" \
   -iheader_style="FIELD-NAME" \
@@ -138,12 +155,10 @@ dx run table-exporter \
 <!-- TODO check if this is correct -->
 Extract OLINK protein levels: 
 ```bash
-fields_file_prot=$(dx upload olink_fields.txt --brief)
-
 dx run table-exporter \
   -idataset_or_cohort_or_dashboard=record-REDACTED \
   -ientity="participant" \
-  -ifield_names_file_txt="$fields_file_prot" \
+  -ifield_names_file_txt="/ukbgym_file_lists/olink_fields.txt" \
   -ioutput="olink_export" \
   -icoding_option="RAW" \
   -iheader_style="FIELD-NAME" \
@@ -157,7 +172,7 @@ dx run table-exporter \
 ```bash
 dx run prepare_regenie_olink_inputs \
   -iraw_covariates="/processed_data/olink/raw/olink_covariates_export.csv" \
-  -icovariate_mapping="/processed_data/olink/olink_covariate_field_mapping.parquet" \
+  -icovariate_mapping="/ukbgym_file_lists/olink_covariate_field_mapping.parquet" \
   -iproteomics_levels="/processed_data/olink/raw/olink_export.csv" \
   --destination /processed_data/olink/regenie/
 ```
@@ -182,7 +197,7 @@ Requries
 dx run adjust_olink_ukbgym \
   -iinput_csv="/processed_data/olink/raw/olink_export.csv" \
   -iregenie_step_1_prs_list="/regenie/step1_prs.list" \
-  -isample_list="/processed_data/olink/samples.txt" \
+  -isample_list="/ukbgym_file_lists/olink_samples.txt" \
   --destination /processed_data/olink/adjusted/
 ```
 
