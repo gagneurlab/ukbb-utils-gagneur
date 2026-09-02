@@ -7,9 +7,9 @@ All applets listed below need to be run in order to prepare required UKBGym data
 
 
 ```
-BCF/VCF files ──▶ vcf_qc_to_parquet ──▶ vep_loftee_parallel ──▶ annotated variants
-                                                                        +
-UKB dataset  ──▶ extract_phenotypes_and_covariates ─────────────▶ association testing
+Genotype BCF/VCF files ──▶ vcf_qc_to_parquet ──▶ vep_loftee_parallel ──▶ annotated variants
+                                                                      
+Phenotyeps and Covariates  ──▶ extract_phenotypes_and_covariates 
 
 Olink: prepare_regenie_olink_inputs ──▶ regenie ──▶ adjust_olink_ukbgym
 ```
