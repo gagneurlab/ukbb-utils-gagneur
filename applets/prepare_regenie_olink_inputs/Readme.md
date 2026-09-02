@@ -1,10 +1,8 @@
-<!-- dx-header -->
 # Prepare regenie Olink inputs (DNAnexus Platform App)
 
 Preprocesses raw UKB covariates and Olink proteomics levels into regenie-ready text files.
-<!-- /dx-header -->
 
-## Prerequisites
+## Prerequisites (to run before you run this applet)
 
 The raw covariates parquet must be exported from the UKB dataset using table-exporter with the bundled field list:
 
@@ -23,9 +21,7 @@ dx run table-exporter \
   --instance-type="mem1_ssd1_v2_x16"
 ```
 
-The field list (`olink_covariate_fields.txt`) is derived from `olink_covariate_field_mapping.parquet`.
-
-## Inputs
+## Inputs (Applet)
 
 | Name | Type | Required | Description |
 |---|---|---|---|

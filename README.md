@@ -1,8 +1,10 @@
 # DeepRVAT-WGS
 
-DNAnexus applets for working with the UKB Biobank data.
-
+DNAnexus applets for working with UKB data, particularly for running UKBGym. 
+<!-- TODO add UKBGym link -->
 Each applet is one step of the pipeline and runs on the RAP as a standalone job.
+All applets listed below need to be run in order to prepare required UKBGym data. 
+
 
 ```
 BCF/VCF files ──▶ vcf_qc_to_parquet ──▶ vep_loftee_parallel ──▶ annotated variants
@@ -37,10 +39,12 @@ Applets can also be run from the RAP web UI.
 
 ---
 
-## `bcf_qc_to_parquet` — QC BCF WGS genotypes and convert to parquet
+## Prepare and annotate genotypes
+
+### `bcf_qc_to_parquet` — QC BCF WGS genotypes and convert to parquet
 <!-- TODO add the file list for ukbgym -->
 Runs genotype- and variant-level QC on a batch of BCF/VCF files and
-consolidates the results into a long genotype parquet.
+consolidates the results into a long genotype and variant metadata parquet files.
 
 ```bash
 base=https://ftp.1000genomes.ebi.ac.uk/vol1/ftp/technical/reference/GRCh38_reference_genome
@@ -61,12 +65,10 @@ dx run bcf_to_gt_parquet \
   --destination /processed_data/genotypes/
 ```
 
----
-
-## `vep_loftee_parallel` — annotate variants with VEP + LOFTEE
+### `vep_loftee_parallel` — annotate variants with VEP + LOFTEE
 
 Annotates the variant metadata with Ensembl VEP and the LOFTEE plugin. Input variants are split into
-chunks that are annotated in parallel subjobs.
+chunks that are annotated in parallel subjobs. Uses `variant_metdata.parquet` created in the `bcf_qc_to_parquet` stp as input. 
 
 
 ```bash
@@ -80,10 +82,13 @@ dx run vep_loftee_parallel \
 
 ---
 
-## `extract_phenotypes_and_covariates` — phenotypes, covariates and PRS
+## Extract phenotypes and covariates 
+
+### `extract_phenotypes_and_covariates` — phenotypes, covariates and PRS
 
 Extracts phenotype and covariate fields from the UKB dataset, subsets to European ancestry and unrelated individuals, and applies statin correction to cholesterol/LDL. 
 This also runs REGENIE Step1 to obtain polygenic risk scores which are then regressed out from the phenotypes, along with additional covariates listed in `ukbbgym_covariate_fieldIDs.txt`.
+Can be run independtly of all other steps. 
 
 ```bash
 # upload the field lists once; reuse the file IDs on later runs
@@ -103,39 +108,51 @@ dx run extract_phenotypes_and_covariates \
 
 ---
 
-## `prepare_regenie_olink_inputs` — format Olink data for REGENIE
-<!-- TODO add the file list for olink -->
+## Prepare olink proteomics data 
 
-Maps raw UKB covariate fields to readable labels, one-hot encodes categoricals, adds derived features
-(age², age×sex, …), joins them to the Olink protein levels and writes the three tab-separated files
-REGENIE expects.
+### `prepare_regenie_olink_inputs` — format Olink data for REGENIE
+<!-- TODO add the file list olink_covariate_fields.txt for olink and olink_covariate_field_mapping.parquet-->
 
-Export the inputs from the dataset first with `table-exporter`:
+Extract covariates and protein levels for Olink data and write it to the three tab-separated files REGENIE expects.
+Can be run independently of all other steps. 
+#### 1. Export the inputs from the dataset first with `table-exporter`:
 
+<!-- TODO it seems like we need to run table exporter twice, once for covariates and once for proteomics levels?  -->
+
+Extract covariates: 
 ```bash
-fields_file=$(dx upload olink_covariate_fields.txt --brief)
+fields_file_cov=$(dx upload olink_covariate_fields.txt --brief)
 
 dx run table-exporter \
   -idataset_or_cohort_or_dashboard=record-REDACTED \
   -ientity="participant" \
-  -ifield_names_file_txt="$fields_file" \
+  -ifield_names_file_txt="$fields_file_cov" \
   -ioutput="olink_covariates_export" \
-  -icoding_option="RAW" -iheader_style="FIELD-NAME" \
-  -
-  --destination="/processed_data/olink/raw/"
+  -icoding_option="RAW" \
+  -iheader_style="FIELD-NAME" \
+  --destination="/processed_data/olink/raw/" \
+  --priority normal \
+  --instance-type="mem1_ssd1_v2_x16"
 ```
 
-| Input | Type | Description |
-|---|---|---|
-| `raw_covariates` | file | Raw covariates CSV from `table-exporter` (samples × UKB fields) |
-| `covariate_mapping` | file | `olink_covariate_field_mapping.parquet` — maps UKB field IDs to names/titles |
-| `proteomics_levels` | file | Olink protein levels CSV from `table-exporter` |
+<!-- TODO check if this is correct -->
+Extract OLINK protein levels: 
+```bash
+fields_file_prot=$(dx upload olink_fields.txt --brief)
 
-| Output | Description |
-|---|---|
-| `regenie_covariates` | FID, IID, covariates |
-| `regenie_levels` | FID, IID, proteins |
-| `regenie_samples` | FID, IID |
+dx run table-exporter \
+  -idataset_or_cohort_or_dashboard=record-REDACTED \
+  -ientity="participant" \
+  -ifield_names_file_txt="$fields_file_prot" \
+  -ioutput="olink_export" \
+  -icoding_option="RAW" \
+  -iheader_style="FIELD-NAME" \
+  --destination="/processed_data/olink/raw/" \
+  --priority normal \
+  --instance-type="mem1_ssd1_v2_x16"
+```
+
+#### 2. Run the preparation applet
 
 ```bash
 dx run prepare_regenie_olink_inputs \
@@ -145,27 +162,21 @@ dx run prepare_regenie_olink_inputs \
   --destination /processed_data/olink/regenie/
 ```
 
+### Run REGNIE step 1 on Olink proteomics data 
+<!-- TODO explain how to run REGENIE Step 1  -->
+
 Run REGENIE step 1 on these files to produce the `.prs` files needed by the next applet.
 
----
 
-## `adjust_olink_ukbgym` — PRS-adjust Olink proteomics
+
+### `adjust_olink_ukbgym` — PRS-adjust Olink proteomics
+<!-- TODO explain how do we get to /processed_data/olink/samples.txt?  I guess we actually don't need this but can just inner join with ukbgym samples? Or was there any other sample-level QC? -->
 
 Normalises the Olink protein levels, regresses out the REGENIE polygenic risk scores per protein (OLS),
-and runs [Protrider](https://github.com/gtsitsiridis/protadjust) — an autoencoder — on the residuals to
-flag outliers. The applet is a thin wrapper around the `ghcr.io/gtsitsiridis/protadjust` Docker image,
-pulled fresh on every run, so a new image release needs no rebuild.
+and run [Protrider](https://github.com/gtsitsiridis/protadjust) — an autoencoder — on the residuals to
+flag outliers. 
 
-| Input | Type | Description |
-|---|---|---|
-| `input_csv` | array:file | Olink CSV(s) exported with `table-exporter` (entity `olink_instance_0`) |
-| `regenie_step_1_prs` | array:file | The `.prs` files from REGENIE step 1 |
-| `regenie_step_1_prs_list` | file | The `*_prs.list` file mapping proteins to `.prs` filenames |
-| `sample_list` | file | Line-separated sample IDs to include |
-
-| Output | Description |
-|---|---|
-| `output_parquet` | `adjusted_proteomics.parquet` — PRS-adjusted protein abundances |
+Requries 
 
 ```bash
 dx run adjust_olink_ukbgym \
