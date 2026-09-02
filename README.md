@@ -1,6 +1,6 @@
 # DeepRVAT-WGS
 
-DNAnexus applets for working with UKB data, particularly for running UKBGym. 
+DNAnexus applets for working with UKB data, particularly for running [UKBGym](https://github.com/gagneurlab/ukbbgym). 
 <!-- TODO add UKBGym link -->
 Each applet is one step of the pipeline and runs on the RAP as a standalone job.
 All applets listed below need to be run in order to prepare required UKBGym data. 
