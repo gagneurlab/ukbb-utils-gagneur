@@ -139,6 +139,19 @@ def ukb_gen_samples_to_remove(data: pl.DataFrame, ukb_with_data: set, cutoff: fl
     remove_samples.extend(data["ID2"].unique().to_list())
     return remove_samples
 
+def write_sample_list(df: pl.DataFrame, out_path: str) -> str:
+    """
+    Write the 'eid' column of df as a plain sample list: one ID per line, no
+    header. This is the format bcftools --samples-file expects and the format
+    the avg_pheno_per_variant_* applets expect for samples_txt.
+    """
+    ids = df.select(pl.col("eid").cast(pl.Utf8)).drop_nulls().unique().sort("eid")
+    with open(out_path, "w") as f:
+        for sample_id in ids["eid"]:
+            f.write(f"{sample_id}\n")
+    print(f"Wrote {ids.height} sample IDs to {out_path}")
+    return out_path
+
 def computed_unrelated_ids(df: pl.DataFrame, cutoff: float = 0.0884) -> pl.DataFrame:
     print("No unrelated file provided. Computing unrelated IDs from ukb_rel.dat...")
     
@@ -437,6 +450,8 @@ def main(dataset_id,
     phenos_pq_out = "phenos.parquet"
     covariates_pq_out = "covariates.parquet"
     prs_pq_out = "prs.parquet"
+    ancestry_samples_out = "eur_samples.txt"
+    unrelated_samples_out = "eur_unrelated_samples.txt"
     
     # ---------------------------------------------------------
     # 2. RUN QC AND FILTERING 
@@ -455,6 +470,7 @@ def main(dataset_id,
             print(f"Retained {df.height} EUR participants.")
         else:
             print("WARNING: Ancestry field 30079 not found. Skipping EUR subset.")
+    write_sample_list(df, ancestry_samples_out)
 
     # C. Subset to Unrelated
     if subset_unrelated:
@@ -462,6 +478,7 @@ def main(dataset_id,
         unrelated_df = computed_unrelated_ids(df)
         df = df.join(unrelated_df, on="eid", how="semi")
         print(f"Retained {df.height} unrelated participants.")
+    write_sample_list(df, unrelated_samples_out)
 
     # D. Statin Correction
     if statin_correction:
@@ -614,6 +631,8 @@ def main(dataset_id,
         "phenotypes": dxpy.dxlink(dxpy.upload_local_file(phenos_pq_out)),
         "PRS": dxpy.dxlink(dxpy.upload_local_file(prs_pq_out)) if bed_file and bim_file and fam_file else None,
         "corrected_phenotypes": dxpy.dxlink(dxpy.upload_local_file(corrected_phenos_pq_out)) if bed_file and bim_file and fam_file else None,
+        "eur_samples": dxpy.dxlink(dxpy.upload_local_file(ancestry_samples_out)),
+        "eur_unrelated_samples": dxpy.dxlink(dxpy.upload_local_file(unrelated_samples_out)),
     }
 
 dxpy.run()

@@ -58,6 +58,14 @@
       "optional": true,
       "patterns": ["*.fai"],
       "help": "Samtools .fai index for the reference FASTA (required if fasta_ref is provided)"
+    },
+    {
+      "name": "samples_file",
+      "label": "Cohort sample list (.txt)",
+      "class": "file",
+      "optional": true,
+      "patterns": ["*.txt"],
+      "help": "One sample ID per line, no header (e.g. eur_samples.txt from extract_phenotypes_and_covariates). Applied after the MAF/missingness filters, so the variant set stays defined on the full cohort; only the emitted genotypes are restricted. IDs must match the BCF sample names, and an ID absent from a BCF fails the job. If omitted, all samples are kept."
     }
   ],
   "outputSpec": [
@@ -73,7 +81,7 @@
       "label": "Variant metadata Parquet",
       "class": "file",
       "patterns": ["*.parquet"],
-      "help": "Per-variant stats: id, chrom, pos, ref, alt, sc_cohort, ac_cohort, mac_cohort"
+      "help": "Per-variant stats: id, chrom, pos, ref, alt, sc_cohort, ac_cohort, mac_cohort. The _cohort counts are computed over the samples present in gt_long, i.e. over samples_file when one is given."
     }
   ],
   "runSpec": {

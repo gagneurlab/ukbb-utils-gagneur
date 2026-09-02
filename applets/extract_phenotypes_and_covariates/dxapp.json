@@ -78,6 +78,18 @@
       "name": "corrected_phenotypes",
       "class": "file",
       "patterns": ["*.parquet"]
+    },
+    {
+      "name": "eur_samples",
+      "class": "file",
+      "patterns": ["*.txt"],
+      "help": "Cohort after the ancestry filter but BEFORE relatedness pruning, one eid per line. This is the list to pass to bcf_to_gt_parquet as samples_file: relatedness pruning is cohort-dependent, so pruning it here would drop individuals that another track (e.g. Olink) would keep. Identical to eur_unrelated_samples when subset_unrelated is false; the full extracted cohort when subset_eur is false."
+    },
+    {
+      "name": "eur_unrelated_samples",
+      "class": "file",
+      "patterns": ["*.txt"],
+      "help": "Cohort after ancestry filtering and relatedness pruning, one eid per line. The trait-track analysis cohort — pass to avg_pheno_per_variant_traits as samples_txt."
     }
   ],
   "runSpec": {

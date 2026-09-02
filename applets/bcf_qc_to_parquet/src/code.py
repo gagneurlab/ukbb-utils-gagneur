@@ -126,6 +126,7 @@ def process_file(
     max_missing,
     fasta_ref=None,
     fasta_ref_index=None,
+    samples_file=None,
 ):
     """QC + normalise one BCF/VCF file and write a sparse non-ref GT Parquet."""
     install_tools()
@@ -149,15 +150,26 @@ def process_file(
             dx_download(fasta_ref_index, fasta_index_fn)
         fasta_ref_arg = f"--fasta-ref {fasta_fn}"
 
+    samples_arg = ""
+    if samples_file:
+        samples_fn = dx_name(samples_file)
+        logger.info("Downloading sample list %s ...", samples_fn)
+        dx_download(samples_file, samples_fn)
+        with open(samples_fn) as fh:
+            n_samples = sum(1 for line in fh if line.strip())
+        logger.info("Restricting output to %d samples from %s", n_samples, samples_fn)
+        samples_arg = f"--samples-file {samples_fn}"
+
     output_fn = strip_bcf_extension(bcf_fn) + ".parquet"
     logger.info(
-        "Converting %s -> %s  (af=%.4g, min_gq=%s, min_lad=%s, max_missing=%s)",
+        "Converting %s -> %s  (af=%.4g, min_gq=%s, min_lad=%s, max_missing=%s, samples=%s)",
         bcf_fn,
         output_fn,
         af_threshold,
         min_gq,
         min_lad,
         max_missing,
+        samples_fn if samples_file else "all",
     )
 
     run(
@@ -167,7 +179,8 @@ def process_file(
         f"--min-gq {min_gq} "
         f"--min-lad {min_lad} "
         f"--max-missing {max_missing} "
-        f"{fasta_ref_arg}"
+        f"{fasta_ref_arg} "
+        f"{samples_arg}"
     )
 
     logger.info("Uploading %s ...", output_fn)
@@ -313,6 +326,7 @@ def main(
     max_missing=0.1,
     fasta_ref=None,
     fasta_ref_index=None,
+    samples_file=None,
 ):
     """
     Read a CSV or Parquet file list and dispatch one process_file subjob per row,
@@ -320,6 +334,10 @@ def main(
 
     Required columns in input_file_list: vcf_file_id, vcf_index_id
     Values must be DNAnexus file IDs (e.g. file-GZZ3630J55kk...).
+
+    samples_file, if given, restricts the output cohort — see process_file. Note
+    that the sc_/ac_/mac_cohort columns of variant_metadata.parquet are then
+    computed over that cohort, since gather derives them from gt_long.
     """
     import polars as pl
 
@@ -369,6 +387,8 @@ def main(
             fn_input["fasta_ref"] = fasta_ref
         if fasta_ref_index is not None:
             fn_input["fasta_ref_index"] = fasta_ref_index
+        if samples_file is not None:
+            fn_input["samples_file"] = samples_file
 
         subjob = dxpy.new_dxjob(
             fn_name="process_file",

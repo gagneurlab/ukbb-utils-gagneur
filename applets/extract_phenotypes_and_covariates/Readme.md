@@ -22,6 +22,18 @@ risk scores and PRS-corrected phenotypes; without them, only phenotypes and cova
 | `PRS`, `corrected_phenotypes` | REGENIE PRS and PRS-corrected phenotypes (only if PLINK files were given) |
 
 
+Alongside the phenotype parquets it writes two sample lists, one eid per line, no header:
+
+| Output | Cohort | Feed it to |
+|---|---|---|
+| `eur_samples.txt` | after the ancestry filter, **before** relatedness pruning | `bcf_qc_to_parquet` → `samples_file` |
+| `eur_unrelated_samples.txt` | after ancestry filtering **and** relatedness pruning | `avg_pheno_per_variant_traits` → `samples_txt` |
+
+Both are snapshotted before the statin correction and quantile transform, and before the PRS
+join, which drops participants without array genotype calls. With `subset_unrelated=False` the
+two files are identical; with `subset_eur=False` the first is the full extracted cohort.
+
+
 ```bash
 # upload the field lists once; reuse the file IDs on later runs
 pheno_file=$(dx upload applets/extract_phenotypes_and_covariates/ukbbgym_trait_fieldIDs.txt --brief)

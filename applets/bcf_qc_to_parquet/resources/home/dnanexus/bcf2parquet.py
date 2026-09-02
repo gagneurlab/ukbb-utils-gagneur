@@ -41,11 +41,13 @@ def bcf_to_tsv(
     min_lad: int | None = None,
     max_missing: float | None = None,
     fasta_ref: str | None = None,
+    samples_file: str | None = None,
 ) -> None:
     """
     Process BCF/VCF file through bcftools pipeline and return TSV data.
 
-    Pipeline: QC (annotate + setGT + missingness) -> normalize -> MAF filter -> sparse GT output
+    Pipeline: QC (annotate + setGT + missingness) -> normalize -> MAF filter
+              -> cohort subset -> sparse GT output
     """
     steps = []
 
@@ -79,7 +81,20 @@ def bcf_to_tsv(
     steps.append("bcftools +fill-tags -Ou -- -t AF,MAF")
     steps.append(f'bcftools view -i "MAF < {af_threshold}" -Ou')
 
-    # 6. Extract sparse non-ref genotypes
+    # 6. Restrict to the analysis cohort.
+    #
+    #    Deliberately placed AFTER the MAF and missingness filters: those tags are
+    #    computed over whatever samples are in the stream, so subsetting earlier
+    #    would define the variant set on the subset rather than on the full cohort.
+    #    Keeping it here reproduces the variant set of the published run while
+    #    still avoiding TSV rows for samples that get discarded anyway.
+    #
+    #    No --force-samples: an ID in the list that is absent from the BCF should
+    #    fail the job loudly rather than silently yield a smaller cohort.
+    if samples_file is not None:
+        steps.append(f"bcftools view --samples-file {samples_file} -Ou")
+
+    # 7. Extract sparse non-ref genotypes
     steps.append(
         "bcftools query "
         '--include \'GT!="RR" & GT!="mis" & GT!="R"\' '
@@ -177,6 +192,16 @@ def install():
     type=click.Path(exists=True),
     help="Reference FASTA for bcftools norm",
 )
+@click.option(
+    "--samples-file",
+    default=None,
+    type=click.Path(exists=True),
+    help=(
+        "Restrict output to these samples (one ID per line, no header). "
+        "Applied after the MAF/missingness filters, so the variant set stays "
+        "defined on the full cohort."
+    ),
+)
 def convert(
     bcf_file: str,
     output_file: str,
@@ -185,27 +210,32 @@ def convert(
     min_lad: int,
     max_missing: float,
     fasta_ref: str | None,
+    samples_file: str | None,
 ):
     """
     Convert BCF/VCF file to Parquet format.
 
     Applies QC (FORMAT field pruning, GQ/LAD filtering, missingness), normalization,
-    MAF filtering, then outputs sparse non-ref genotypes as Parquet.
+    MAF filtering, an optional cohort subset, then outputs sparse non-ref genotypes
+    as Parquet.
 
     \b
     Example:
         python bcf2parquet.py convert input.vcf.gz output.parquet \\
             --min-gq 10 --min-lad 8 --max-missing 0.1 \\
-            --fasta-ref ref.fa --af-threshold 0.001
+            --fasta-ref ref.fa --af-threshold 0.001 \\
+            --samples-file eur_samples.txt
     """
     logger.info("Processing %s", bcf_file)
     logger.info(
-        "Parameters: af_threshold=%.4g, min_gq=%s, min_lad=%s, max_missing=%s, fasta_ref=%s",
+        "Parameters: af_threshold=%.4g, min_gq=%s, min_lad=%s, max_missing=%s, "
+        "fasta_ref=%s, samples_file=%s",
         af_threshold,
         min_gq,
         min_lad,
         max_missing,
         fasta_ref or "none",
+        samples_file or "none",
     )
 
     with tempfile.NamedTemporaryFile(mode="w+b") as tmp:
@@ -217,6 +247,7 @@ def convert(
             min_lad=min_lad,
             max_missing=max_missing,
             fasta_ref=fasta_ref,
+            samples_file=samples_file,
         )
         result = subprocess.run(["du", "-sh", tmp.name], capture_output=True, text=True)
         logger.info("TSV temp file size: %s", result.stdout.strip())

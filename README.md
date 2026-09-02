@@ -1,14 +1,17 @@
 # UKBGym processing applets
 
-DNAnexus applets for working with UKB data, particularly for running [UKBGym](https://github.com/gagneurlab/ukbbgym). 
+DNAnexus applets for working with UKB data, particularly for running the UKBB analyses of [UKBGym](https://github.com/gagneurlab/ukbbgym/tree/main/ukbb). 
 Each applet is one step of the pipeline and runs on the RAP as a standalone job.
 All applets listed below need to be run in order to prepare required UKBGym data. 
 
 
 ```
-Genotype BCF/VCF files ──▶ vcf_qc_to_parquet ──▶ vep_loftee_parallel ──▶ annotated variants
-                                                                      
-Phenotyeps and Covariates  ──▶ extract_phenotypes_and_covariates 
+Phenotypes and Covariates ──▶ extract_phenotypes_and_covariates ──┬──▶ corrected phenotypes
+                                                                  │
+                                                     eur_samples.txt
+                                                                  │
+                                                                  ▼
+Genotype BCF/VCF files ─────────────────────▶ bcf_qc_to_parquet ──▶ vep_loftee_parallel ──▶ annotated variants
 
 Olink: prepare_regenie_olink_inputs ──▶ regenie ──▶ adjust_olink_ukbgym
 ```
@@ -61,6 +64,35 @@ That creates `/ukbgym_file_lists/` in the project, which is the path used in eve
 
 ---
 
+## Extract phenotypes and covariates 
+
+### `extract_phenotypes_and_covariates` — phenotypes, covariates and PRS
+
+Extracts phenotype and covariate fields from the UKB dataset, subsets to European ancestry and unrelated individuals, and applies statin correction to cholesterol/LDL. 
+This also runs REGENIE Step1 to obtain polygenic risk scores which are then regressed out from the phenotypes, along with additional covariates listed in `ukbbgym_covariate_fieldIDs.txt`.
+Needs no input from any other step, so run it first — it emits the sample lists the later steps
+take as input:
+
+| Output | Cohort | Feed it to |
+|---|---|---|
+| `eur_samples.txt` | after the ancestry filter, **before** relatedness pruning | `bcf_qc_to_parquet` → `samples_file` |
+| `eur_unrelated_samples.txt` | after ancestry filtering **and** relatedness pruning | `avg_pheno_per_variant_traits` → `samples_txt` |
+
+
+```bash
+dx run extract_phenotypes_and_covariates \
+  -idataset_id="record-XXXXXXXX" \
+  -ipheno_list_file="/ukbgym_file_lists/ukbbgym_trait_fieldIDs.txt" \
+  -iadditional_covars_file="/ukbgym_file_lists/ukbbgym_covariate_fieldIDs.txt" \
+  -ibed_file="/plink/ukb.bed" -ibim_file="/plink/ukb.bim" -ifam_file="/plink/ukb.fam" \
+  -isubset_eur="True" \
+  -isubset_unrelated="True" \
+  -istatin_correction="True" \
+  --destination /processed_data/phenotypes/
+```
+
+---
+
 ## Prepare and annotate genotypes
 
 ### `bcf_qc_to_parquet` — QC BCF WGS genotypes and convert to parquet
@@ -84,6 +116,7 @@ dx run bcf_to_gt_parquet \
   -iaf_threshold=0.001 \
   -ifasta_ref="/reference/GRCh38_full_analysis_set_plus_decoy_hla.fa" \
   -ifasta_ref_index="/reference/GRCh38_full_analysis_set_plus_decoy_hla.fa.fai" \
+  -isamples_file="/processed_data/phenotypes/eur_samples.txt" \
   --destination /processed_data/genotypes/
 ```
 
@@ -105,27 +138,6 @@ dx run vep_loftee_parallel \
 
 ---
 
-## Extract phenotypes and covariates 
-
-### `extract_phenotypes_and_covariates` — phenotypes, covariates and PRS
-
-Extracts phenotype and covariate fields from the UKB dataset, subsets to European ancestry and unrelated individuals, and applies statin correction to cholesterol/LDL. 
-This also runs REGENIE Step1 to obtain polygenic risk scores which are then regressed out from the phenotypes, along with additional covariates listed in `ukbbgym_covariate_fieldIDs.txt`.
-Can be run independtly of all other steps. 
-
-```bash
-dx run extract_phenotypes_and_covariates \
-  -idataset_id="record-XXXXXXXX" \
-  -ipheno_list_file="/ukbgym_file_lists/ukbbgym_trait_fieldIDs.txt" \
-  -iadditional_covars_file="/ukbgym_file_lists/ukbbgym_covariate_fieldIDs.txt" \
-  -ibed_file="/plink/ukb.bed" -ibim_file="/plink/ukb.bim" -ifam_file="/plink/ukb.fam" \
-  -isubset_eur="True" \
-  -isubset_unrelated="True" \
-  -istatin_correction="True" \
-  --destination /processed_data/phenotypes/
-```
-
----
 
 ## Prepare olink proteomics data 
 
