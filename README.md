@@ -50,7 +50,7 @@ That creates `/ukbgym_file_lists/` in the project, which is the path used in eve
 | File | Used by | As input |
 |---|---|---|
 | `ukbgym_gene_vcf_files.parquet` | `bcf_qc_to_parquet` | `input_file_list` |
-| `ukbbgym_gene_list.txt` (optional) | `vep_loftee_parallel` | `genes_to_keep_file` |
+| `ukbbgym_gene_list.txt` | `vep_loftee_parallel` | `genes_to_keep_file` |
 | `ukbbgym_trait_fieldIDs.txt` | `extract_phenotypes_and_covariates` | `pheno_list_file` |
 | `ukbbgym_covariate_fieldIDs.txt` | `extract_phenotypes_and_covariates` | `additional_covars_file` |
 | `olink_covariate_fields.txt` | `table-exporter` (Olink covariates) | `field_names_file_txt` |
