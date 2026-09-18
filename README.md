@@ -1,8 +1,8 @@
-# UKBGym processing applets
+# UKBB processing applets
 
-DNAnexus applets for working with UKB data, particularly for running the UKBB analyses of [UKBGym](https://github.com/gagneurlab/ukbbgym/tree/main/ukbb). 
+DNAnexus applets for working with UKBB data, particularly for running the UKBB analyses of [UKBGym](https://github.com/gagneurlab/ukbbgym/tree/main/ukbb). 
 Each applet is one step of the pipeline and runs on the RAP as a standalone job.
-All applets listed below need to be run in order to prepare required UKBGym data. 
+All applets listed below need to be run in order to prepare the required UKBB data. 
 
 
 ```
